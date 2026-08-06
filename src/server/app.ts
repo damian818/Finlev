@@ -65,8 +65,9 @@ app.get("/api/inflation-fx-history", async (req, res) => {
       monthlyFx[month] = item.venta || item.compra;
     });
 
-    const recentInfl = inflData.filter(item => item.fecha >= '2024-01-01');
-    
+    const startDate = (req.query.startDate as string) || '2024-01-01';
+
+    const recentInfl = inflData.filter(item => item.fecha >= startDate);
     let cumulativeIndex = 100;
     const historyPoints = recentInfl.map((item, idx) => {
       const month = item.fecha.substring(0, 7);

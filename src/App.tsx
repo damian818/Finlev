@@ -108,7 +108,12 @@ export default function App() {
       .catch(err => console.warn('Using default exchange rate fallback:', err));
 
     // Fetch historical inflation and FX history
-    fetch('/api/inflation-fx-history')
+    const oldestDate = transactions.length > 0
+      ? new Date(Math.min(...transactions.map(t => new Date(t.date).getTime())))
+      : new Date('2024-01-01');
+    const startDate = oldestDate.toISOString().substring(0, 10);
+    
+    fetch(`/api/inflation-fx-history?startDate=${startDate}`)
       .then(res => res.json())
       .then(data => {
         if (data.points && data.points.length > 0) {
