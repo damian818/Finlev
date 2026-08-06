@@ -21,6 +21,7 @@ export function InflationVsFxTab({ historyData: initialHistory }: InflationVsFxT
   const [isLoading, setIsLoading] = useState(false);
   const [sourceInfo, setSourceInfo] = useState<string>('Historical Initial Data');
   const [lastFetched, setLastFetched] = useState<string | null>(null);
+  const [fetchError, setFetchError] = useState<boolean>(false);
 
   // Interactive Calculator State
   const [calcInputType, setCalcInputType] = useState<'ARS' | 'USD'>('USD');
@@ -29,16 +30,19 @@ export function InflationVsFxTab({ historyData: initialHistory }: InflationVsFxT
 
   const fetchLiveMetrics = async () => {
     setIsLoading(true);
+    setFetchError(false);
     try {
       const [fxRes, inflRes] = await Promise.all([
         fetch('/api/fx-rates').catch(() => null),
         fetch('/api/inflation-fx-history').catch(() => null)
       ]);
 
+      let success = false;
       if (fxRes && fxRes.ok) {
         const fxJson = await fxRes.json();
         if (fxJson.rates) {
           setLiveRates(fxJson.rates);
+          success = true;
         }
       }
 
@@ -47,12 +51,18 @@ export function InflationVsFxTab({ historyData: initialHistory }: InflationVsFxT
         if (inflJson.points && inflJson.points.length > 0) {
           setHistoryData(inflJson.points);
           setSourceInfo(inflJson.source || 'ArgentinaDatos API');
+          success = true;
         }
       }
 
-      setLastFetched(new Date().toLocaleTimeString());
+      if (success) {
+        setLastFetched(new Date().toLocaleTimeString());
+      } else {
+        setFetchError(true);
+      }
     } catch (err) {
       console.error('Failed to load live inflation/fx data:', err);
+      setFetchError(true);
     } finally {
       setIsLoading(false);
     }
@@ -129,9 +139,19 @@ export function InflationVsFxTab({ historyData: initialHistory }: InflationVsFxT
           <div>
             <div className="flex items-center space-x-2">
               <h3 className="text-sm sm:text-base font-bold text-slate-100">Live Inflation vs. USD/ARS</h3>
-              <span className="hidden xs:inline-flex items-center px-2 py-0.5 rounded text-[9px] font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
-                <CheckCircle2 className="w-3 h-3 mr-1" /> API Connected
-              </span>
+              {fetchError ? (
+                <span className="hidden xs:inline-flex items-center px-2 py-0.5 rounded text-[9px] font-semibold bg-rose-500/10 text-rose-400 border border-rose-500/20">
+                  <AlertCircle className="w-3 h-3 mr-1" /> API Sync Failed
+                </span>
+              ) : lastFetched ? (
+                <span className="hidden xs:inline-flex items-center px-2 py-0.5 rounded text-[9px] font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                  <CheckCircle2 className="w-3 h-3 mr-1" /> API Connected
+                </span>
+              ) : (
+                <span className="hidden xs:inline-flex items-center px-2 py-0.5 rounded text-[9px] font-semibold bg-slate-500/10 text-slate-400 border border-slate-500/20">
+                  <Activity className="w-3 h-3 mr-1" /> Initializing Sync...
+                </span>
+              )}
             </div>
             <p className="text-[10px] sm:text-xs text-slate-400 mt-0.5">
               Live economic intelligence from DolarApi & ArgentinaDatos.

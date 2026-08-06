@@ -148,10 +148,34 @@ export default function App() {
       if (text) {
         const uploadedTx = parseTransactions(text);
         if (uploadedTx.length > 0) {
-          setTransactions(uploadedTx);
-          // Derive budget goals from uploaded CSV categories if existing budgets are empty or missing categories
-          const derived = deriveBudgetsFromTransactions(uploadedTx, budgets);
-          setBudgets(derived);
+          setTransactions(prev => {
+            // Create a set of existing transaction keys for O(1) lookup
+            // Key format: date|title|amount|account|currency
+            const existingKeys = new Set(prev.map(t => 
+              t.id && !t.id.startsWith('tx-') ? t.id : `${t.date}|${t.title}|${t.amount}|${t.account}|${t.currency}`
+            ));
+
+            const newTxs = uploadedTx.filter(t => {
+              const key = t.id && !t.id.startsWith('tx-') ? t.id : `${t.date}|${t.title}|${t.amount}|${t.account}|${t.currency}`;
+              return !existingKeys.has(key);
+            });
+
+            if (newTxs.length === 0) {
+              // Even if no new transactions, we might want to check budgets
+              return prev;
+            }
+            
+            const combined = [...newTxs, ...prev];
+            // Sort by date descending
+            const sorted = combined.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+            
+            // Derive budget goals from the updated combined list
+            const derived = deriveBudgetsFromTransactions(sorted, budgets);
+            setBudgets(derived);
+            
+            return sorted;
+          });
+          
           setCurrentTab('overview');
         }
       }
