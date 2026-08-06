@@ -7,8 +7,11 @@ import React, { useState, useEffect } from 'react';
 import { ViewTab, DisplayCurrency, Transaction, BudgetGoal, AccountCustomBalance, TransactionFilter, InflationPoint, CategoryItem, AccountItem } from './types';
 import { rawCsvSample, parseTransactions, defaultBudgets, defaultRecurringRules, historicalInflationAndFX, defaultCategoryItems, defaultAccountItems } from './data/defaultTransactions';
 import { deriveBudgetsFromTransactions } from './utils/financeUtils';
+import { getSupabaseClient } from './lib/supabase';
+import { fetchUserDataFromSupabase, saveAllUserDataToSupabase } from './services/supabaseSync';
 import { Navbar } from './components/Navbar';
 import { OverviewTab } from './components/OverviewTab';
+import { ReportsTab } from './components/ReportsTab';
 import { TransactionsTab } from './components/TransactionsTab';
 import { AccountsTab } from './components/AccountsTab';
 import { BudgetTab } from './components/BudgetTab';
@@ -228,6 +231,18 @@ export default function App() {
     });
   };
 
+  const handleReassignTransactionPeriod = (txId: string, statementCloseDate: string | undefined) => {
+    setTransactions(prev => prev.map(t => {
+      if (t.id === txId) {
+        return {
+          ...t,
+          statementCloseDate: statementCloseDate === '' ? undefined : statementCloseDate
+        };
+      }
+      return t;
+    }));
+  };
+
   useEffect(() => {
     // Fetch live FX rates on app mount
     fetch('/api/fx-rates')
@@ -257,6 +272,40 @@ export default function App() {
       })
       .catch(err => console.warn('Using default historical data fallback:', err));
   }, []);
+
+  // Sync Supabase user data on auth login
+  useEffect(() => {
+    const client = getSupabaseClient();
+    if (!client) return;
+
+    const syncFromSupabase = async () => {
+      const data = await fetchUserDataFromSupabase();
+      if (data) {
+        if (data.transactions && data.transactions.length > 0) setTransactions(data.transactions);
+        if (data.categories && data.categories.length > 0) setCategories(data.categories);
+        if (data.accounts && data.accounts.length > 0) setAccounts(data.accounts);
+        if (data.budgets && data.budgets.length > 0) setBudgets(data.budgets);
+      }
+    };
+
+    syncFromSupabase();
+
+    const { data: { subscription } } = client.auth.onAuthStateChange((_e, session) => {
+      if (session?.user) {
+        syncFromSupabase();
+      }
+    });
+
+    return () => subscription.unsubscribe();
+  }, []);
+
+  // Save changes to Supabase when user is authenticated
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      saveAllUserDataToSupabase({ transactions, categories, accounts, budgets });
+    }, 1000);
+    return () => clearTimeout(timer);
+  }, [transactions, categories, accounts, budgets]);
 
   const handleUpdateAccountBalance = (accountName: string, currentBalance: number, currency: string) => {
     setCustomBalances(prev => {
@@ -400,6 +449,14 @@ export default function App() {
             onUpdateAccountBalance={handleUpdateAccountBalance}
             onNavigateToTransactionsWithFilter={handleNavigateToTransactionsWithFilter}
             onAddTransaction={handleAddTransaction}
+            onReassignTransactionPeriod={handleReassignTransactionPeriod}
+          />
+        )}
+        {currentTab === 'reports' && (
+          <ReportsTab
+            transactions={transactions}
+            displayCurrency={displayCurrency}
+            usdArsRate={usdArsRate}
           />
         )}
         {currentTab === 'budgets' && (

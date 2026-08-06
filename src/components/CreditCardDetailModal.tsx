@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { Transaction, DisplayCurrency, TransactionFilter, CreditCardClosingRule, ClosingRuleType } from '../types';
-import { getCreditCardStatements, getCurrentStatementIndex, getNextCloseDate, formatCurrency, getStatementCloseDateForTx, getClosingRuleLabel, getCloseDateForMonthAndYear } from '../utils/financeUtils';
+import { getCreditCardStatements, getCurrentStatementIndex, getNextCloseDate, formatCurrency, getStatementCloseDateForTx, getStatementCloseDateForPayment, getClosingRuleLabel, getCloseDateForMonthAndYear } from '../utils/financeUtils';
 import { X, CreditCard, Calendar, ArrowRightLeft, Plus, CheckCircle, AlertCircle, FileText, ChevronRight, Settings, Edit3 } from 'lucide-react';
 
 interface CreditCardDetailModalProps {
@@ -16,6 +16,7 @@ interface CreditCardDetailModalProps {
   onUpdateClosingRule?: (rule: CreditCardClosingRule) => void;
   onAddTransaction: (tx: Transaction) => void;
   onNavigateToTransactionsWithFilter: (filter: TransactionFilter) => void;
+  onReassignTransactionPeriod?: (txId: string, statementCloseDate: string | undefined) => void;
 }
 
 export function CreditCardDetailModal({
@@ -31,6 +32,7 @@ export function CreditCardDetailModal({
   onUpdateClosingRule,
   onAddTransaction,
   onNavigateToTransactionsWithFilter,
+  onReassignTransactionPeriod,
 }: CreditCardDetailModalProps) {
   const [selectedStatementIdx, setSelectedStatementIdx] = useState<number>(0);
   const [showPaymentForm, setShowPaymentForm] = useState<boolean>(false);
@@ -120,6 +122,31 @@ export function CreditCardDetailModal({
   }, [isOpen, accountName, currentIdx]);
 
   const activeStatement = statements[selectedStatementIdx] || statements[currentIdx] || statements[0];
+
+  const availablePeriods = useMemo(() => {
+    const datesSet = new Set<string>();
+    statements.forEach(s => datesSet.add(s.closeDate));
+
+    const now = new Date();
+    const pad = (n: number) => String(n).padStart(2, '0');
+    for (let offset = -12; offset <= 12; offset++) {
+      let y = now.getFullYear();
+      let m = now.getMonth() + offset;
+      while (m < 0) {
+        y -= 1;
+        m += 12;
+      }
+      while (m > 11) {
+        y += 1;
+        m -= 12;
+      }
+      const dt = getCloseDateForMonthAndYear(y, m, currentRule);
+      const closeStr = `${dt.getFullYear()}-${pad(dt.getMonth() + 1)}-${pad(dt.getDate())}`;
+      datesSet.add(closeStr);
+    }
+
+    return Array.from(datesSet).sort();
+  }, [statements, currentRule]);
 
   if (!isOpen || !accountName) return null;
 
@@ -603,37 +630,84 @@ export function CreditCardDetailModal({
                         <th className="py-2.5 px-3">Merchant / Title</th>
                         <th className="py-2.5 px-3">Category</th>
                         <th className="py-2.5 px-3 text-center">Cuota / Installments</th>
+                        <th className="py-2.5 px-3">Statement Period</th>
                         <th className="py-2.5 px-3 text-right">Amount</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-800/60 text-slate-200">
-                      {activeStatement?.expenses.map((tx) => (
-                        <tr key={tx.id} className="hover:bg-slate-800/40 transition-colors">
-                          <td className="py-2.5 px-3 font-mono text-slate-400 text-[11px]">
-                            {tx.date ? tx.date.substring(0, 10) : ''}
-                          </td>
-                          <td className="py-2.5 px-3 font-semibold text-slate-100">
-                            {tx.title}
-                          </td>
-                          <td className="py-2.5 px-3 text-slate-400">
-                            <span className="px-2 py-0.5 rounded bg-slate-800 border border-slate-700 text-[10px]">
-                              {tx.category}
-                            </span>
-                          </td>
-                          <td className="py-2.5 px-3 text-center">
-                            {tx.installments ? (
-                              <span className="px-2 py-0.5 rounded bg-amber-500/10 text-amber-400 border border-amber-500/20 text-[10px] font-bold">
-                                {tx.installments}
+                      {activeStatement?.expenses.map((tx) => {
+                        const autoClose = getStatementCloseDateForTx(tx.date, currentRule);
+                        const isReassigned = tx.statementCloseDate && tx.statementCloseDate !== autoClose;
+                        return (
+                          <tr key={tx.id} className="hover:bg-slate-800/40 transition-colors">
+                            <td className="py-2.5 px-3 font-mono text-slate-400 text-[11px]">
+                              {tx.date ? tx.date.substring(0, 10) : ''}
+                            </td>
+                            <td className="py-2.5 px-3 font-semibold text-slate-100">
+                              {tx.title}
+                            </td>
+                            <td className="py-2.5 px-3 text-slate-400">
+                              <span className="px-2 py-0.5 rounded bg-slate-800 border border-slate-700 text-[10px]">
+                                {tx.category}
                               </span>
-                            ) : (
-                              <span className="text-slate-600 text-[10px]">1/1</span>
-                            )}
-                          </td>
-                          <td className="py-2.5 px-3 text-right font-bold text-rose-400">
-                            {formatCurrency(tx.amount, tx.currency as DisplayCurrency)}
-                          </td>
-                        </tr>
-                      ))}
+                            </td>
+                            <td className="py-2.5 px-3 text-center">
+                              {tx.installments ? (
+                                <span className="px-2 py-0.5 rounded bg-amber-500/10 text-amber-400 border border-amber-500/20 text-[10px] font-bold">
+                                  {tx.installments}
+                                </span>
+                              ) : (
+                                <span className="text-slate-600 text-[10px]">1/1</span>
+                              )}
+                            </td>
+                            <td className="py-2.5 px-3">
+                              {onReassignTransactionPeriod ? (
+                                <div className="flex items-center gap-1.5">
+                                  <select
+                                    value={tx.statementCloseDate || 'AUTO'}
+                                    onChange={(e) => {
+                                      const val = e.target.value;
+                                      onReassignTransactionPeriod(tx.id, val === 'AUTO' ? undefined : val);
+                                    }}
+                                    className={`px-2 py-1 bg-[#0f131a] border rounded text-[11px] font-mono focus:outline-none focus:ring-1 focus:ring-purple-500 ${
+                                      isReassigned
+                                        ? 'border-purple-500/80 text-purple-300 font-bold bg-purple-500/10'
+                                        : 'border-slate-700 text-slate-300'
+                                    }`}
+                                  >
+                                    <option value="AUTO">
+                                      Auto ({autoClose})
+                                    </option>
+                                    {availablePeriods.map((cDate) => {
+                                      const isAutoOption = cDate === autoClose;
+                                      return (
+                                        <option key={cDate} value={cDate}>
+                                          Closing {cDate} {isAutoOption ? '(Auto Default)' : ''}
+                                        </option>
+                                      );
+                                    })}
+                                  </select>
+                                  {isReassigned && (
+                                    <span 
+                                      title="Expense reassigned to a custom statement period" 
+                                      className="px-1.5 py-0.5 text-[9px] bg-purple-500/20 text-purple-300 rounded border border-purple-500/30 font-semibold"
+                                    >
+                                      Reassigned
+                                    </span>
+                                  )}
+                                </div>
+                              ) : (
+                                <span className="text-slate-400 font-mono text-[11px]">
+                                  {tx.statementCloseDate || autoClose}
+                                </span>
+                              )}
+                            </td>
+                            <td className="py-2.5 px-3 text-right font-bold text-rose-400">
+                              {formatCurrency(tx.amount, tx.currency as DisplayCurrency)}
+                            </td>
+                          </tr>
+                        );
+                      })}
                     </tbody>
                   </table>
                 </div>
@@ -661,28 +735,75 @@ export function CreditCardDetailModal({
                         <th className="py-2.5 px-3">Date</th>
                         <th className="py-2.5 px-3">Reference</th>
                         <th className="py-2.5 px-3">Paid From</th>
+                        <th className="py-2.5 px-3">Statement Period</th>
                         <th className="py-2.5 px-3 text-right">Amount Paid</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-800/60 text-slate-200">
-                      {activeStatement?.payments.map((tx) => (
-                        <tr key={tx.id} className="hover:bg-slate-800/40 transition-colors">
-                          <td className="py-2.5 px-3 font-mono text-slate-400 text-[11px]">
-                            {tx.date ? tx.date.substring(0, 10) : ''}
-                          </td>
-                          <td className="py-2.5 px-3 font-semibold text-slate-100">
-                            {tx.title}
-                          </td>
-                          <td className="py-2.5 px-3 text-slate-300">
-                            <span className="px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 text-[10px] font-medium">
-                              {tx.account}
-                            </span>
-                          </td>
-                          <td className="py-2.5 px-3 text-right font-bold text-emerald-400">
-                            {formatCurrency(tx.receiveAmount || tx.transferAmount || tx.amount, tx.currency as DisplayCurrency)}
-                          </td>
-                        </tr>
-                      ))}
+                      {activeStatement?.payments.map((tx) => {
+                        const autoClose = getStatementCloseDateForPayment(tx.date, currentRule);
+                        const isReassigned = tx.statementCloseDate && tx.statementCloseDate !== autoClose;
+                        return (
+                          <tr key={tx.id} className="hover:bg-slate-800/40 transition-colors">
+                            <td className="py-2.5 px-3 font-mono text-slate-400 text-[11px]">
+                              {tx.date ? tx.date.substring(0, 10) : ''}
+                            </td>
+                            <td className="py-2.5 px-3 font-semibold text-slate-100">
+                              {tx.title}
+                            </td>
+                            <td className="py-2.5 px-3 text-slate-300">
+                              <span className="px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 text-[10px] font-medium">
+                                {tx.account}
+                              </span>
+                            </td>
+                            <td className="py-2.5 px-3">
+                              {onReassignTransactionPeriod ? (
+                                <div className="flex items-center gap-1.5">
+                                  <select
+                                    value={tx.statementCloseDate || 'AUTO'}
+                                    onChange={(e) => {
+                                      const val = e.target.value;
+                                      onReassignTransactionPeriod(tx.id, val === 'AUTO' ? undefined : val);
+                                    }}
+                                    className={`px-2 py-1 bg-[#0f131a] border rounded text-[11px] font-mono focus:outline-none focus:ring-1 focus:ring-purple-500 ${
+                                      isReassigned
+                                        ? 'border-purple-500/80 text-purple-300 font-bold bg-purple-500/10'
+                                        : 'border-slate-700 text-slate-300'
+                                    }`}
+                                  >
+                                    <option value="AUTO">
+                                      Auto ({autoClose})
+                                    </option>
+                                    {availablePeriods.map((cDate) => {
+                                      const isAutoOption = cDate === autoClose;
+                                      return (
+                                        <option key={cDate} value={cDate}>
+                                          Closing {cDate} {isAutoOption ? '(Auto Default)' : ''}
+                                        </option>
+                                      );
+                                    })}
+                                  </select>
+                                  {isReassigned && (
+                                    <span 
+                                      title="Payment reassigned to a custom statement period" 
+                                      className="px-1.5 py-0.5 text-[9px] bg-purple-500/20 text-purple-300 rounded border border-purple-500/30 font-semibold"
+                                    >
+                                      Reassigned
+                                    </span>
+                                  )}
+                                </div>
+                              ) : (
+                                <span className="text-slate-400 font-mono text-[11px]">
+                                  {tx.statementCloseDate || autoClose}
+                                </span>
+                              )}
+                            </td>
+                            <td className="py-2.5 px-3 text-right font-bold text-emerald-400">
+                              {formatCurrency(tx.receiveAmount || tx.transferAmount || tx.amount, tx.currency as DisplayCurrency)}
+                            </td>
+                          </tr>
+                        );
+                      })}
                     </tbody>
                   </table>
                 </div>

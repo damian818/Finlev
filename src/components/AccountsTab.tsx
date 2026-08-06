@@ -15,6 +15,7 @@ interface AccountsTabProps {
   onUpdateAccountBalance: (accountName: string, currentBalance: number, currency: string) => void;
   onNavigateToTransactionsWithFilter: (filter: TransactionFilter) => void;
   onAddTransaction: (tx: Transaction) => void;
+  onReassignTransactionPeriod?: (txId: string, statementCloseDate: string | undefined) => void;
 }
 
 const COLORS = ['#34d399', '#60a5fa', '#f59e0b', '#a78bfa', '#f43f5e', '#38bdf8', '#818cf8', '#fb7185'];
@@ -29,6 +30,7 @@ export function AccountsTab({
   onUpdateAccountBalance,
   onNavigateToTransactionsWithFilter,
   onAddTransaction,
+  onReassignTransactionPeriod,
 }: AccountsTabProps) {
   const [editingAccount, setEditingAccount] = useState<string | null>(null);
   const [editValue, setEditValue] = useState<string>('');
@@ -590,6 +592,7 @@ export function AccountsTab({
           onUpdateClosingRule={(rule) => handleSaveCcRule(selectedCardAccount, rule)}
           onAddTransaction={onAddTransaction}
           onNavigateToTransactionsWithFilter={onNavigateToTransactionsWithFilter}
+          onReassignTransactionPeriod={onReassignTransactionPeriod}
         />
       )}
     </div>

@@ -96,7 +96,7 @@ export interface AccountItem {
   description?: string;
 }
 
-export type ViewTab = 'overview' | 'transactions' | 'accounts' | 'budgets' | 'recurring' | 'inflation' | 'ai-advisor' | 'settings';
+export type ViewTab = 'overview' | 'transactions' | 'accounts' | 'budgets' | 'recurring' | 'inflation' | 'ai-advisor' | 'settings' | 'reports';
 export type DisplayCurrency = 'ARS' | 'USD';
 
 export interface AccountCustomBalance {

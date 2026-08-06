@@ -1,6 +1,7 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { ViewTab, DisplayCurrency } from '../types';
-import { LayoutDashboard, Receipt, Wallet, Target, Repeat, TrendingUp, Sparkles, Upload, PlusCircle, RefreshCw, Trash2, Sliders } from 'lucide-react';
+import { LayoutDashboard, Receipt, Wallet, Target, Repeat, TrendingUp, Sparkles, Upload, PlusCircle, RefreshCw, Trash2, Sliders, BarChart3, UserCheck, LogIn } from 'lucide-react';
+import { getSupabaseClient, signInWithGoogle } from '../lib/supabase';
 
 interface NavbarProps {
   currentTab: ViewTab;
@@ -27,8 +28,35 @@ export function Navbar({
   onResetData,
   onOpenDeleteModal,
 }: NavbarProps) {
+  const [user, setUser] = useState<any>(null);
+
+  useEffect(() => {
+    const client = getSupabaseClient();
+    if (client) {
+      client.auth.getSession().then(({ data: { session } }) => {
+        setUser(session?.user || null);
+      });
+      const { data: { subscription } } = client.auth.onAuthStateChange((_e, session) => {
+        setUser(session?.user || null);
+      });
+      return () => subscription.unsubscribe();
+    }
+  }, []);
+
+  const handleSsoClick = async () => {
+    if (user) {
+      setTab('settings');
+    } else {
+      const { error } = await signInWithGoogle();
+      if (error) {
+        setTab('settings');
+      }
+    }
+  };
+
   const tabs: { id: ViewTab; label: string; shortLabel?: string; icon: React.ReactNode }[] = [
     { id: 'overview', label: 'Overview', icon: <LayoutDashboard className="w-4 h-4" /> },
+    { id: 'reports', label: 'Reports', icon: <BarChart3 className="w-4 h-4 text-emerald-400" /> },
     { id: 'transactions', label: 'Transactions', shortLabel: 'Txs', icon: <Receipt className="w-4 h-4" /> },
     { id: 'accounts', label: 'Accounts', icon: <Wallet className="w-4 h-4" /> },
     { id: 'budgets', label: 'Budgets', icon: <Target className="w-4 h-4" /> },
@@ -105,6 +133,29 @@ export function Navbar({
             >
               <PlusCircle className="w-3 h-3 sm:w-3.5 sm:h-3.5 sm:mr-1.5" />
               <span className="hidden sm:inline">Add</span>
+            </button>
+
+            {/* Google SSO Login / Status Badge */}
+            <button
+              onClick={handleSsoClick}
+              className={`inline-flex items-center gap-1.5 px-2 sm:px-3 py-1.5 rounded-lg text-[10px] sm:text-xs font-bold border transition-all shrink-0 ${
+                user
+                  ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400 hover:bg-emerald-500/20'
+                  : 'bg-[#161b22] border-slate-700 text-slate-300 hover:text-white hover:bg-slate-800'
+              }`}
+              title={user ? `Signed in as ${user.email}` : 'Sign in with Google SSO'}
+            >
+              {user ? (
+                <>
+                  <UserCheck className="w-3.5 h-3.5 text-emerald-400" />
+                  <span className="hidden md:inline font-mono text-[11px] max-w-[120px] truncate">{user.email?.split('@')[0]}</span>
+                </>
+              ) : (
+                <>
+                  <LogIn className="w-3.5 h-3.5 text-teal-400" />
+                  <span className="hidden sm:inline">Google SSO</span>
+                </>
+              )}
             </button>
 
             <div className="flex items-center gap-1 sm:gap-2">
