@@ -4,8 +4,8 @@
  */
 
 import React, { useState, useEffect } from 'react';
-import { ViewTab, DisplayCurrency, Transaction, BudgetGoal, AccountCustomBalance, TransactionFilter, InflationPoint } from './types';
-import { rawCsvSample, parseTransactions, defaultBudgets, defaultRecurringRules, historicalInflationAndFX } from './data/defaultTransactions';
+import { ViewTab, DisplayCurrency, Transaction, BudgetGoal, AccountCustomBalance, TransactionFilter, InflationPoint, CategoryItem, AccountItem } from './types';
+import { rawCsvSample, parseTransactions, defaultBudgets, defaultRecurringRules, historicalInflationAndFX, defaultCategoryItems, defaultAccountItems } from './data/defaultTransactions';
 import { deriveBudgetsFromTransactions } from './utils/financeUtils';
 import { Navbar } from './components/Navbar';
 import { OverviewTab } from './components/OverviewTab';
@@ -15,6 +15,7 @@ import { BudgetTab } from './components/BudgetTab';
 import { RecurringTab } from './components/RecurringTab';
 import { InflationVsFxTab } from './components/InflationVsFxTab';
 import { AiAdvisorTab } from './components/AiAdvisorTab';
+import { SettingsTab } from './components/SettingsTab';
 import { AddTransactionModal } from './components/AddTransactionModal';
 import { ConfirmDeleteModal } from './components/ConfirmDeleteModal';
 import { AiChatWidget } from './components/AiChatWidget';
@@ -45,6 +46,111 @@ export default function App() {
     }
     return defaultBudgets;
   });
+
+  // Custom categories list state
+  const [categories, setCategories] = useState<CategoryItem[]>(() => {
+    try {
+      const saved = localStorage.getItem('finance_app_custom_categories');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      }
+    } catch (e) {
+      console.warn('Failed to load custom categories from localStorage');
+    }
+    return defaultCategoryItems;
+  });
+
+  // Custom accounts list state
+  const [accounts, setAccounts] = useState<AccountItem[]>(() => {
+    try {
+      const saved = localStorage.getItem('finance_app_custom_accounts');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      }
+    } catch (e) {
+      console.warn('Failed to load custom accounts from localStorage');
+    }
+    return defaultAccountItems;
+  });
+
+  // Sync custom categories to localStorage
+  useEffect(() => {
+    try {
+      localStorage.setItem('finance_app_custom_categories', JSON.stringify(categories));
+    } catch (e) {
+      console.warn('Failed to save custom categories to localStorage');
+    }
+  }, [categories]);
+
+  // Sync custom accounts to localStorage
+  useEffect(() => {
+    try {
+      localStorage.setItem('finance_app_custom_accounts', JSON.stringify(accounts));
+    } catch (e) {
+      console.warn('Failed to save custom accounts to localStorage');
+    }
+  }, [accounts]);
+
+  // Category Handlers
+  const handleAddCategory = (newCat: CategoryItem) => {
+    setCategories(prev => [...prev, newCat]);
+  };
+
+  const handleEditCategory = (oldName: string, updatedCat: CategoryItem, updateTransactions: boolean) => {
+    setCategories(prev => prev.map(c => c.name === oldName ? updatedCat : c));
+
+    if (updateTransactions && oldName !== updatedCat.name) {
+      setTransactions(prev => prev.map(t => t.category === oldName ? { ...t, category: updatedCat.name } : t));
+      setBudgets(prev => prev.map(b => b.category === oldName ? { ...b, category: updatedCat.name } : b));
+    }
+  };
+
+  const handleDeleteCategory = (catName: string, reassignTo?: string) => {
+    setCategories(prev => prev.filter(c => c.name !== catName));
+    setBudgets(prev => prev.filter(b => b.category !== catName));
+
+    if (reassignTo) {
+      setTransactions(prev => prev.map(t => t.category === catName ? { ...t, category: reassignTo } : t));
+    }
+  };
+
+  // Account Handlers
+  const handleAddAccount = (newAcc: AccountItem) => {
+    setAccounts(prev => [...prev, newAcc]);
+    if (newAcc.initialBalance !== undefined) {
+      handleUpdateAccountBalance(newAcc.name, newAcc.initialBalance, newAcc.currency);
+    }
+  };
+
+  const handleEditAccount = (oldName: string, updatedAcc: AccountItem, updateTransactions: boolean) => {
+    setAccounts(prev => prev.map(a => a.name === oldName ? updatedAcc : a));
+
+    if (updatedAcc.initialBalance !== undefined) {
+      handleUpdateAccountBalance(updatedAcc.name, updatedAcc.initialBalance, updatedAcc.currency);
+    }
+
+    if (updateTransactions && oldName !== updatedAcc.name) {
+      setTransactions(prev => prev.map(t => {
+        let updated = { ...t };
+        if (t.account === oldName) updated.account = updatedAcc.name;
+        if (t.toAccount === oldName) updated.toAccount = updatedAcc.name;
+        return updated;
+      }));
+    }
+  };
+
+  const handleDeleteAccount = (accName: string) => {
+    setAccounts(prev => prev.filter(a => a.name !== accName));
+  };
+
+  const handleImportBackup = (data: { transactions: Transaction[]; categories: CategoryItem[]; accounts: AccountItem[]; budgets: BudgetGoal[] }) => {
+    if (data.transactions) setTransactions(data.transactions);
+    if (data.categories) setCategories(data.categories);
+    if (data.accounts) setAccounts(data.accounts);
+    if (data.budgets) setBudgets(data.budgets);
+  };
 
   const [currentTab, setCurrentTab] = useState<ViewTab>('overview');
   const [displayCurrency, setDisplayCurrency] = useState<DisplayCurrency>('ARS');
@@ -318,12 +424,32 @@ export default function App() {
         {currentTab === 'ai-advisor' && (
           <AiAdvisorTab transactions={transactions} displayCurrency={displayCurrency} usdArsRate={usdArsRate} />
         )}
+        {currentTab === 'settings' && (
+          <SettingsTab
+            categories={categories}
+            accounts={accounts}
+            transactions={transactions}
+            budgets={budgets}
+            usdArsRate={usdArsRate}
+            onUpdateRate={setUsdArsRate}
+            onAddCategory={handleAddCategory}
+            onEditCategory={handleEditCategory}
+            onDeleteCategory={handleDeleteCategory}
+            onAddAccount={handleAddAccount}
+            onEditAccount={handleEditAccount}
+            onDeleteAccount={handleDeleteAccount}
+            onResetData={handleResetData}
+            onImportBackup={handleImportBackup}
+          />
+        )}
       </main>
 
       <AddTransactionModal
         isOpen={isAddModalOpen}
         onClose={() => setIsAddModalOpen(false)}
         onAddTransaction={handleAddTransaction}
+        existingAccounts={accounts.map(a => a.name)}
+        existingCategories={categories.map(c => c.name)}
       />
 
       <ConfirmDeleteModal

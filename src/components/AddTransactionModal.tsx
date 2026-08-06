@@ -8,6 +8,7 @@ interface AddTransactionModalProps {
   onClose: () => void;
   onAddTransaction: (tx: Transaction) => void;
   existingAccounts?: string[];
+  existingCategories?: string[];
   initialAccount?: string;
 }
 
@@ -16,6 +17,7 @@ export function AddTransactionModal({
   onClose, 
   onAddTransaction,
   existingAccounts = ['BBVA', 'DollarApp', 'Visa BBVA', 'Master BBVA', 'Visa Santander', 'ICBC/Comafi Visa'],
+  existingCategories = ['Alimentos y Bebidas', 'Transporte', 'Restaurant', 'Hogar', 'Salud', 'Ropa', 'Facturas y tarifas', 'Educación', 'Regalos', 'Inversiones', 'Sueldo', 'Freelance', 'General'],
   initialAccount
 }: AddTransactionModalProps) {
   const [title, setTitle] = useState('');
@@ -210,21 +212,33 @@ export function AddTransactionModal({
                 <label className="block text-slate-400 font-medium mb-1">Category</label>
                 <input
                   type="text"
+                  list="categoriesDatalist"
                   placeholder="e.g. Alimentos y Bebidas"
                   value={category}
                   onChange={(e) => setCategory(e.target.value)}
                   className="w-full px-3 py-2 bg-[#0f131a] border border-slate-700 text-slate-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-slate-500 placeholder-slate-500"
                 />
+                <datalist id="categoriesDatalist">
+                  {existingCategories.map((cat) => (
+                    <option key={cat} value={cat} />
+                  ))}
+                </datalist>
               </div>
               <div>
                 <label className="block text-slate-400 font-medium mb-1">Account</label>
                 <input
                   type="text"
+                  list="accountsDatalist"
                   placeholder="e.g. Visa BBVA / Main Account"
                   value={account}
                   onChange={(e) => setAccount(e.target.value)}
                   className="w-full px-3 py-2 bg-[#0f131a] border border-slate-700 text-slate-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-slate-500 placeholder-slate-500"
                 />
+                <datalist id="accountsDatalist">
+                  {existingAccounts.map((acc) => (
+                    <option key={acc} value={acc} />
+                  ))}
+                </datalist>
               </div>
             </div>
           )}

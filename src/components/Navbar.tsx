@@ -1,6 +1,6 @@
 import React from 'react';
 import { ViewTab, DisplayCurrency } from '../types';
-import { LayoutDashboard, Receipt, Wallet, Target, Repeat, TrendingUp, Sparkles, Upload, PlusCircle, RefreshCw, Trash2 } from 'lucide-react';
+import { LayoutDashboard, Receipt, Wallet, Target, Repeat, TrendingUp, Sparkles, Upload, PlusCircle, RefreshCw, Trash2, Sliders } from 'lucide-react';
 
 interface NavbarProps {
   currentTab: ViewTab;
@@ -35,6 +35,7 @@ export function Navbar({
     { id: 'recurring', label: 'Recurring & Installments', shortLabel: 'Recurring', icon: <Repeat className="w-4 h-4" /> },
     { id: 'inflation', label: 'Inflation vs FX', shortLabel: 'Eco', icon: <TrendingUp className="w-4 h-4" /> },
     { id: 'ai-advisor', label: 'AI Advisor', icon: <Sparkles className="w-4 h-4 text-amber-500" /> },
+    { id: 'settings', label: 'Settings', icon: <Sliders className="w-4 h-4 text-slate-400" /> },
   ];
 
   return (

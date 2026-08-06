@@ -79,7 +79,24 @@ export interface InflationPoint {
   usdArsRate: number; // Official or MEP rate
 }
 
-export type ViewTab = 'overview' | 'transactions' | 'accounts' | 'budgets' | 'recurring' | 'inflation' | 'ai-advisor';
+export interface CategoryItem {
+  id: string;
+  name: string;
+  type: 'EXPENSE' | 'INCOME' | 'BOTH';
+  description?: string;
+}
+
+export interface AccountItem {
+  id: string;
+  name: string;
+  type: 'CHECKING' | 'SAVINGS' | 'CREDIT_CARD' | 'WALLET' | 'INVESTMENT' | 'OTHER';
+  currency: 'ARS' | 'USD';
+  initialBalance?: number;
+  closingRule?: CreditCardClosingRule;
+  description?: string;
+}
+
+export type ViewTab = 'overview' | 'transactions' | 'accounts' | 'budgets' | 'recurring' | 'inflation' | 'ai-advisor' | 'settings';
 export type DisplayCurrency = 'ARS' | 'USD';
 
 export interface AccountCustomBalance {

@@ -1,4 +1,4 @@
-import { Transaction, BudgetGoal, RecurringRule, InflationPoint } from '../types';
+import { Transaction, BudgetGoal, RecurringRule, InflationPoint, CategoryItem, AccountItem } from '../types';
 import Papa from 'papaparse';
 
 export const rawCsvSample = `Date,Title,Category,Account,Amount,Currency,Type,Transfer Amount,Transfer Currency,To Account,Receive Amount,Receive Currency,Description,Due Date,ID
@@ -165,4 +165,36 @@ export const historicalInflationAndFX: InflationPoint[] = [
   { month: '2026-06', inflationIndex: 162.2, usdArsRate: 1480 },
   { month: '2026-07', inflationIndex: 165.6, usdArsRate: 1485 },
   { month: '2026-08', inflationIndex: 169.1, usdArsRate: 1496 },
+];
+
+export const defaultCategoryItems: CategoryItem[] = [
+  { id: 'cat-1', name: 'Alimentos y Bebidas', type: 'EXPENSE' },
+  { id: 'cat-2', name: 'Transporte', type: 'EXPENSE' },
+  { id: 'cat-3', name: 'Restaurant', type: 'EXPENSE' },
+  { id: 'cat-4', name: 'Hogar', type: 'EXPENSE' },
+  { id: 'cat-5', name: 'Salud', type: 'EXPENSE' },
+  { id: 'cat-6', name: 'Ropa', type: 'EXPENSE' },
+  { id: 'cat-7', name: 'Facturas y tarifas', type: 'EXPENSE' },
+  { id: 'cat-8', name: 'Educación', type: 'EXPENSE' },
+  { id: 'cat-9', name: 'Regalos', type: 'EXPENSE' },
+  { id: 'cat-10', name: 'Inversiones', type: 'BOTH' },
+  { id: 'cat-11', name: 'Sueldo', type: 'INCOME' },
+  { id: 'cat-12', name: 'Freelance', type: 'INCOME' },
+  { id: 'cat-13', name: 'Tarjetas de Crédito', type: 'BOTH' },
+  { id: 'cat-14', name: 'Transferencias', type: 'BOTH' },
+  { id: 'cat-15', name: 'Entretenimiento', type: 'EXPENSE' },
+  { id: 'cat-16', name: 'General', type: 'BOTH' },
+];
+
+export const defaultAccountItems: AccountItem[] = [
+  { id: 'acc-1', name: 'BBVA', type: 'CHECKING', currency: 'ARS', initialBalance: 280000 },
+  { id: 'acc-2', name: 'Santander (ARS)', type: 'CHECKING', currency: 'ARS', initialBalance: 450000 },
+  { id: 'acc-3', name: 'ICBC (ARS)', type: 'CHECKING', currency: 'ARS', initialBalance: 150000 },
+  { id: 'acc-4', name: 'DollarApp', type: 'WALLET', currency: 'USD', initialBalance: 3200 },
+  { id: 'acc-5', name: 'Deel', type: 'WALLET', currency: 'USD', initialBalance: 12450 },
+  { id: 'acc-6', name: 'Cocos Capital (ARS)', type: 'INVESTMENT', currency: 'ARS', initialBalance: 1850000 },
+  { id: 'acc-7', name: 'Visa BBVA', type: 'CREDIT_CARD', currency: 'ARS', closingRule: { ruleType: 'FIXED_DAY', fixedDay: 25 } },
+  { id: 'acc-8', name: 'Master BBVA', type: 'CREDIT_CARD', currency: 'ARS', closingRule: { ruleType: 'FIXED_DAY', fixedDay: 25 } },
+  { id: 'acc-9', name: 'Visa Santander', type: 'CREDIT_CARD', currency: 'ARS', closingRule: { ruleType: 'FIXED_DAY', fixedDay: 25 } },
+  { id: 'acc-10', name: 'ICBC/Comafi Visa', type: 'CREDIT_CARD', currency: 'ARS', closingRule: { ruleType: 'NTH_WEEKDAY', weekday: 4, nth: 4 } },
 ];
