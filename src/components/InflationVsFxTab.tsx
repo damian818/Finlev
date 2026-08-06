@@ -28,6 +28,8 @@ export function InflationVsFxTab({ historyData: initialHistory }: InflationVsFxT
   const [calcAmount, setCalcAmount] = useState<number>(5000);
   const [startMonth, setStartMonth] = useState<string>('2024-01');
 
+  const FINLEV_CACHE_KEY = 'finlev_fx_data_cache';
+
   const fetchLiveMetrics = async () => {
     setIsLoading(true);
     setFetchError(false);
@@ -37,11 +39,15 @@ export function InflationVsFxTab({ historyData: initialHistory }: InflationVsFxT
         fetch('/api/inflation-fx-history').catch(() => null)
       ]);
 
+      let newLiveRates = null;
+      let newHistoryData = null;
       let success = false;
+
       if (fxRes && fxRes.ok) {
         const fxJson = await fxRes.json();
         if (fxJson.rates) {
-          setLiveRates(fxJson.rates);
+          newLiveRates = fxJson.rates;
+          setLiveRates(newLiveRates);
           success = true;
         }
       }
@@ -49,7 +55,8 @@ export function InflationVsFxTab({ historyData: initialHistory }: InflationVsFxT
       if (inflRes && inflRes.ok) {
         const inflJson = await inflRes.json();
         if (inflJson.points && inflJson.points.length > 0) {
-          setHistoryData(inflJson.points);
+          newHistoryData = inflJson.points;
+          setHistoryData(newHistoryData);
           setSourceInfo(inflJson.source || 'ArgentinaDatos API');
           success = true;
         }
@@ -57,12 +64,40 @@ export function InflationVsFxTab({ historyData: initialHistory }: InflationVsFxT
 
       if (success) {
         setLastFetched(new Date().toLocaleTimeString());
+        
+        // Save to cache
+        localStorage.setItem(FINLEV_CACHE_KEY, JSON.stringify({
+          liveRates: newLiveRates || liveRates,
+          historyData: newHistoryData || historyData,
+          sourceInfo: 'Cached Data',
+          lastFetched: new Date().toLocaleTimeString()
+        }));
       } else {
-        setFetchError(true);
+        // Try load from cache
+        const cached = localStorage.getItem(FINLEV_CACHE_KEY);
+        if (cached) {
+          const { liveRates: cRates, historyData: cHistory, sourceInfo: cSource, lastFetched: cTime } = JSON.parse(cached);
+          if (cRates) setLiveRates(cRates);
+          if (cHistory) setHistoryData(cHistory);
+          setSourceInfo(`${cSource} (Cached at ${cTime})`);
+          setLastFetched(cTime);
+        } else {
+          setFetchError(true);
+        }
       }
     } catch (err) {
       console.error('Failed to load live inflation/fx data:', err);
-      setFetchError(true);
+      // Try load from cache
+      const cached = localStorage.getItem(FINLEV_CACHE_KEY);
+      if (cached) {
+        const { liveRates: cRates, historyData: cHistory, sourceInfo: cSource, lastFetched: cTime } = JSON.parse(cached);
+        if (cRates) setLiveRates(cRates);
+        if (cHistory) setHistoryData(cHistory);
+        setSourceInfo(`${cSource} (Cached at ${cTime})`);
+        setLastFetched(cTime);
+      } else {
+        setFetchError(true);
+      }
     } finally {
       setIsLoading(false);
     }
