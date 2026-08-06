@@ -176,9 +176,12 @@ export default function App() {
   const [authLoading, setAuthLoading] = useState(true);
 
   useEffect(() => {
+    console.log('App: useEffect for auth init');
     const client = getSupabaseClient();
     if (client) {
+      console.log('App: Supabase client found');
       client.auth.getSession().then(({ data: { session } }) => {
+        console.log('App: getSession session=', session);
         setAuthUser(session?.user || null);
         setAuthLoading(false);
         if (session?.user && window.location.hash) {
@@ -187,6 +190,7 @@ export default function App() {
       });
 
       const { data: { subscription } } = client.auth.onAuthStateChange((_e, session) => {
+        console.log('App: onAuthStateChange session=', session);
         setAuthUser(session?.user || null);
         setAuthLoading(false);
         if (session?.user && window.location.hash) {
@@ -195,6 +199,7 @@ export default function App() {
       });
       return () => subscription.unsubscribe();
     } else {
+      console.log('App: Supabase client NOT found');
       setAuthLoading(false);
     }
   }, []);
