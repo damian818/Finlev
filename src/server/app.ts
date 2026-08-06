@@ -7,49 +7,81 @@ dotenv.config();
 const app = express();
 app.use(express.json({ limit: '10mb' }));
 
-// API Routes
-app.get("/api/fx-rates", async (req, res) => {
+// Helper function to fetch with timeout
+async function fetchWithTimeout(url: string, options: RequestInit = {}, timeoutMs: number = 3500): Promise<Response> {
+  const controller = new AbortController();
+  const id = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const response = await fetch("https://dolarapi.com/v1/dolares", {
-      headers: {
-        'User-Agent': 'Finlev-App/1.0'
-      }
+    const response = await fetch(url, {
+      ...options,
+      signal: controller.signal,
     });
+    clearTimeout(id);
+    return response;
+  } catch (err) {
+    clearTimeout(id);
+    throw err;
+  }
+}
+
+// Default fallback FX rates if external API is unreachable or times out
+const FALLBACK_FX_RATES = {
+  bolsa: { buy: 1390, sell: 1410, name: "Bolsa (MEP)", updated: new Date().toISOString() },
+  blue: { buy: 1470, sell: 1490, name: "Blue", updated: new Date().toISOString() },
+  oficial: { buy: 1040, sell: 1080, name: "Oficial", updated: new Date().toISOString() },
+  tarjeta: { buy: 1680, sell: 1720, name: "Tarjeta", updated: new Date().toISOString() },
+  ccl: { buy: 1420, sell: 1445, name: "Contado con Liqui", updated: new Date().toISOString() },
+};
+
+// API Routes
+app.get(["/api/fx-rates", "/fx-rates"], async (req, res) => {
+  try {
+    const response = await fetchWithTimeout("https://dolarapi.com/v1/dolares", {
+      headers: { 'User-Agent': 'Finlev-App/1.0' }
+    }, 3500);
+
     if (!response.ok) {
       throw new Error(`DolarApi responded with status ${response.status}`);
     }
     const data = await response.json();
     
     const ratesMap: Record<string, { buy: number; sell: number; name: string; updated: string }> = {};
-    data.forEach((item: any) => {
-      ratesMap[item.casa] = {
-        buy: item.compra,
-        sell: item.venta,
-        name: item.nombre,
-        updated: item.fechaActualizacion,
-      };
-    });
+    if (Array.isArray(data)) {
+      data.forEach((item: any) => {
+        ratesMap[item.casa] = {
+          buy: item.compra,
+          sell: item.venta,
+          name: item.nombre,
+          updated: item.fechaActualizacion,
+        };
+      });
+    }
 
     res.json({
-      rates: ratesMap,
+      rates: Object.keys(ratesMap).length > 0 ? ratesMap : FALLBACK_FX_RATES,
       raw: data,
       fetchedAt: new Date().toISOString()
     });
   } catch (error: any) {
-    console.error("Error fetching FX rates:", error);
-    res.status(500).json({ error: error.message || "Failed to fetch live exchange rates" });
+    console.warn("Using fallback FX rates due to upstream timeout/error:", error?.message || error);
+    res.json({
+      rates: FALLBACK_FX_RATES,
+      fallback: true,
+      error: error?.message || "Using cached fallback exchange rates",
+      fetchedAt: new Date().toISOString()
+    });
   }
 });
 
-app.get("/api/inflation-fx-history", async (req, res) => {
+app.get(["/api/inflation-fx-history", "/inflation-fx-history"], async (req, res) => {
   try {
     const [inflRes, fxRes] = await Promise.all([
-      fetch("https://api.argentinadatos.com/v1/finanzas/indices/inflacion", {
+      fetchWithTimeout("https://api.argentinadatos.com/v1/finanzas/indices/inflacion", {
         headers: { 'User-Agent': 'Finlev-App/1.0' }
-      }),
-      fetch("https://api.argentinadatos.com/v1/cotizaciones/dolares/bolsa", {
+      }, 3500),
+      fetchWithTimeout("https://api.argentinadatos.com/v1/cotizaciones/dolares/bolsa", {
         headers: { 'User-Agent': 'Finlev-App/1.0' }
-      })
+      }, 3500)
     ]);
 
     if (!inflRes.ok || !fxRes.ok) {
@@ -60,14 +92,16 @@ app.get("/api/inflation-fx-history", async (req, res) => {
     const fxData: { fecha: string; compra: number; venta: number }[] = await fxRes.json();
 
     const monthlyFx: Record<string, number> = {};
-    fxData.forEach(item => {
-      const month = item.fecha.substring(0, 7);
-      monthlyFx[month] = item.venta || item.compra;
-    });
+    if (Array.isArray(fxData)) {
+      fxData.forEach(item => {
+        const month = item.fecha.substring(0, 7);
+        monthlyFx[month] = item.venta || item.compra;
+      });
+    }
 
     const startDate = (req.query.startDate as string) || '2024-01-01';
 
-    const recentInfl = inflData.filter(item => item.fecha >= startDate);
+    const recentInfl = Array.isArray(inflData) ? inflData.filter(item => item.fecha >= startDate) : [];
     let cumulativeIndex = 100;
     const historyPoints = recentInfl.map((item, idx) => {
       const month = item.fecha.substring(0, 7);
@@ -100,12 +134,17 @@ app.get("/api/inflation-fx-history", async (req, res) => {
       fetchedAt: new Date().toISOString()
     });
   } catch (error: any) {
-    console.error("Error fetching inflation/FX history:", error);
-    res.status(500).json({ error: error.message || "Failed to fetch inflation history" });
+    console.warn("Error fetching inflation/FX history, returning fallback message:", error?.message || error);
+    res.json({
+      points: [],
+      fallback: true,
+      error: error?.message || "Historical inflation data unavailable",
+      fetchedAt: new Date().toISOString()
+    });
   }
 });
 
-app.post("/api/ai-insights", async (req, res) => {
+app.post(["/api/ai-insights", "/ai-insights"], async (req, res) => {
   try {
     const { summaryData } = req.body;
     const apiKey = process.env.GEMINI_API_KEY;
@@ -124,11 +163,11 @@ app.post("/api/ai-insights", async (req, res) => {
     
     const prompt = `You are an expert financial advisor analyzing a user's multi-currency (ARS & USD), multi-account personal finance data. 
 Here is the financial summary for the period:
-- Total Income: ${summaryData.totalIncome}
-- Total Expenses: ${summaryData.totalExpenses}
-- Savings Rate: ${summaryData.savingsRate}%
-- Top Expense Categories: ${JSON.stringify(summaryData.topCategories)}
-- Top Accounts: ${JSON.stringify(summaryData.topAccounts)}
+- Total Income: ${summaryData?.totalIncome}
+- Total Expenses: ${summaryData?.totalExpenses}
+- Savings Rate: ${summaryData?.savingsRate}%
+- Top Expense Categories: ${JSON.stringify(summaryData?.topCategories)}
+- Top Accounts: ${JSON.stringify(summaryData?.topAccounts)}
 - Inflation vs FX Context: Argentina peso depreciation and inflation impact.
 
 Provide 3 actionable financial recommendations, 2 key spending risks or anomalies, and a brief overall financial health score (0-100) with a 2-sentence summary. Format your response in clear JSON structure or clean markdown.`;
@@ -158,7 +197,7 @@ Provide 3 actionable financial recommendations, 2 key spending risks or anomalie
   }
 });
 
-app.post("/api/ai-chat", async (req, res) => {
+app.post(["/api/ai-chat", "/ai-chat"], async (req, res) => {
   try {
     const { messages, financialContext } = req.body;
     const apiKey = process.env.GEMINI_API_KEY;
@@ -184,7 +223,7 @@ Here is the user's current financial context:
 
 Answer the user's questions clearly, accurately, and concisely. Use the provided context to give personalized advice.`;
 
-    const lastMessage = messages[messages.length - 1].content;
+    const lastMessage = messages && messages.length > 0 ? messages[messages.length - 1].content : '';
     
     // Construct history for the interaction
     const historyText = (messages || []).slice(0, -1).map((m: any) => 
@@ -221,8 +260,9 @@ Answer the user's questions clearly, accurately, and concisely. Use the provided
   }
 });
 
-app.get("/api/health", (req, res) => {
+app.get(["/api/health", "/health"], (req, res) => {
   res.json({ status: "ok" });
 });
 
 export default app;
+
