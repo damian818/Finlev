@@ -181,11 +181,17 @@ export default function App() {
       client.auth.getSession().then(({ data: { session } }) => {
         setAuthUser(session?.user || null);
         setAuthLoading(false);
+        if (session?.user && window.location.hash) {
+          window.history.replaceState(null, '', window.location.pathname);
+        }
       });
 
       const { data: { subscription } } = client.auth.onAuthStateChange((_e, session) => {
         setAuthUser(session?.user || null);
         setAuthLoading(false);
+        if (session?.user && window.location.hash) {
+          window.history.replaceState(null, '', window.location.pathname);
+        }
       });
       return () => subscription.unsubscribe();
     } else {
