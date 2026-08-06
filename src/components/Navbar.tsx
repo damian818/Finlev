@@ -45,7 +45,7 @@ export function Navbar({
           <div className="flex items-center space-x-2 sm:space-x-3 shrink-0">
             <div className="w-8 h-8 sm:w-12 sm:h-12 rounded-lg sm:rounded-xl overflow-hidden border border-slate-700 shadow-lg">
               <img 
-                src="/src/assets/images/finlev_logo_1785985975885.jpg" 
+                src="/finlev_logo.jpg" 
                 alt="Finlev Logo" 
                 className="w-full h-full object-cover"
                 referrerPolicy="no-referrer"

@@ -1,7 +1,7 @@
 import React, { useState, useMemo } from 'react';
-import { Transaction, DisplayCurrency, AccountCustomBalance, TransactionFilter } from '../types';
-import { computeAccountBalances, formatCurrency, isCreditCardAccount, getCreditCardStatements } from '../utils/financeUtils';
-import { Wallet, DollarSign, Landmark, Edit3, Check, RotateCcw, HelpCircle, History, ArrowRightLeft, ExternalLink, CreditCard, ChevronRight, AlertCircle, Sparkles } from 'lucide-react';
+import { Transaction, DisplayCurrency, AccountCustomBalance, TransactionFilter, CreditCardClosingRule } from '../types';
+import { computeAccountBalances, formatCurrency, isCreditCardAccount, getCreditCardStatements, getCurrentStatement, getNextCloseDate, getClosingRuleLabel } from '../utils/financeUtils';
+import { Wallet, DollarSign, Landmark, Edit3, Check, RotateCcw, HelpCircle, History, ArrowRightLeft, ExternalLink, CreditCard, ChevronRight, AlertCircle, Sparkles, Calendar, Settings } from 'lucide-react';
 import { ResponsiveContainer, PieChart, Pie, Cell, Tooltip } from 'recharts';
 import { CreditCardDetailModal } from './CreditCardDetailModal';
 
@@ -10,6 +10,8 @@ interface AccountsTabProps {
   displayCurrency: DisplayCurrency;
   usdArsRate: number;
   customBalances: Record<string, AccountCustomBalance>;
+  periodStatusOverrides?: Record<string, 'PAID' | 'OPEN'>;
+  onUpdatePeriodStatus?: (accountName: string, closeDate: string, status?: 'PAID' | 'OPEN') => void;
   onUpdateAccountBalance: (accountName: string, currentBalance: number, currency: string) => void;
   onNavigateToTransactionsWithFilter: (filter: TransactionFilter) => void;
   onAddTransaction: (tx: Transaction) => void;
@@ -22,6 +24,8 @@ export function AccountsTab({
   displayCurrency,
   usdArsRate,
   customBalances,
+  periodStatusOverrides,
+  onUpdatePeriodStatus,
   onUpdateAccountBalance,
   onNavigateToTransactionsWithFilter,
   onAddTransaction,
@@ -40,6 +44,23 @@ export function AccountsTab({
     } catch (e) {}
     return {};
   });
+
+  // Credit Card closing rules map
+  const [ccRulesMap, setCcRulesMap] = useState<Record<string, CreditCardClosingRule>>(() => {
+    try {
+      const saved = localStorage.getItem('finance_app_cc_rules');
+      if (saved) return JSON.parse(saved);
+    } catch (e) {}
+    return {};
+  });
+
+  const handleSaveCcRule = (accName: string, rule: CreditCardClosingRule) => {
+    const updated = { ...ccRulesMap, [accName]: rule };
+    setCcRulesMap(updated);
+    try {
+      localStorage.setItem('finance_app_cc_rules', JSON.stringify(updated));
+    } catch (e) {}
+  };
 
   const toggleAccountClassification = (accName: string, currentIsCC: boolean) => {
     const updated = { ...customCCMap, [accName]: !currentIsCC };
@@ -100,10 +121,12 @@ export function AccountsTab({
     const currentUSD = isUsd ? currentBalance : (usdArsRate > 0 ? currentBalance / usdArsRate : 0);
 
     const isCC = isCreditCardAccount(name, customCCMap);
+    const accountRule = ccRulesMap[name] || { ruleType: 'FIXED_DAY', fixedDay: 25 };
 
-    // If it's a credit card, compute statement summary
-    const statements = isCC ? getCreditCardStatements(transactions, name, 25) : [];
-    const latestStatement = statements[0];
+    // If it's a credit card, compute statement summary based on current date & time
+    const statements = isCC ? getCreditCardStatements(transactions, name, accountRule, periodStatusOverrides) : [];
+    const currentStatement = isCC ? getCurrentStatement(statements, accountRule) : undefined;
+    const nextCloseDate = isCC ? getNextCloseDate(accountRule) : undefined;
 
     return {
       accountName: name,
@@ -111,6 +134,7 @@ export function AccountsTab({
       originalCurrency: currency,
       isUsd,
       isCreditCard: isCC,
+      closingRule: accountRule,
       currentBalance,
       balanceOriginal: currentBalance,
       netDelta: deltaObj.netDelta,
@@ -119,7 +143,9 @@ export function AccountsTab({
       currentUSD,
       txCount: deltaObj.txCount,
       hasCustom: custom !== undefined,
-      latestStatement,
+      currentStatement,
+      nextCloseDate,
+      statements,
     };
   }).filter(acc => acc.txCount > 0 || acc.hasCustom);
 
@@ -133,7 +159,7 @@ export function AccountsTab({
 
   // Credit Card Outstanding Debt (Expenses minus payments)
   const totalCcDebtARS = creditCardAccounts.reduce((acc, curr) => {
-    const debt = curr.latestStatement ? Math.max(0, curr.latestStatement.netDue) : Math.abs(Math.min(0, curr.currentBalance));
+    const debt = curr.currentStatement ? Math.max(0, curr.currentStatement.netDue) : Math.abs(Math.min(0, curr.currentBalance));
     const debtARS = curr.isUsd ? debt * usdArsRate : debt;
     return acc + debtARS;
   }, 0);
@@ -251,8 +277,9 @@ export function AccountsTab({
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             {creditCardAccounts.map((acc) => {
-              const stmt = acc.latestStatement;
+              const stmt = acc.currentStatement;
               const netDue = stmt ? stmt.netDue : 0;
+              const nextClose = acc.nextCloseDate || stmt?.closeDate;
 
               return (
                 <div
@@ -288,17 +315,22 @@ export function AccountsTab({
                   {/* Statement metrics box */}
                   <div className="p-3 bg-[#161b22] rounded-xl border border-slate-800 grid grid-cols-2 gap-3 text-xs">
                     <div>
-                      <span className="text-[10px] text-slate-400 font-medium block">Latest Statement Due:</span>
+                      <span className="text-[10px] text-slate-400 font-medium block">Current Statement Due:</span>
                       <span className={`text-base font-bold ${netDue > 0 ? 'text-amber-400' : 'text-emerald-400'}`}>
                         {formatCurrency(netDue, acc.originalCurrency as DisplayCurrency)}
                       </span>
                     </div>
 
                     <div className="text-right">
-                      <span className="text-[10px] text-slate-400 font-medium block">Closing Date:</span>
-                      <span className="text-xs font-semibold text-slate-200 font-mono">
-                        {stmt?.closeDate || '25th of month'}
+                      <span className="text-[10px] text-slate-400 font-medium block">Closing Date Schedule:</span>
+                      <span className="text-xs font-semibold text-purple-300">
+                        {getClosingRuleLabel(acc.closingRule)}
                       </span>
+                      {nextClose && (
+                        <span className="text-[10px] text-slate-400 block font-mono mt-0.5">
+                          Next close: {nextClose}
+                        </span>
+                      )}
                     </div>
                   </div>
 
@@ -552,6 +584,10 @@ export function AccountsTab({
           transactions={transactions}
           displayCurrency={displayCurrency}
           usdArsRate={usdArsRate}
+          closingRule={ccRulesMap[selectedCardAccount] || { ruleType: 'FIXED_DAY', fixedDay: 25 }}
+          periodStatusOverrides={periodStatusOverrides}
+          onUpdatePeriodStatus={onUpdatePeriodStatus}
+          onUpdateClosingRule={(rule) => handleSaveCcRule(selectedCardAccount, rule)}
           onAddTransaction={onAddTransaction}
           onNavigateToTransactionsWithFilter={onNavigateToTransactionsWithFilter}
         />

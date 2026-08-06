@@ -93,6 +93,35 @@ export default function App() {
     };
   });
 
+  // Credit card manual period status overrides
+  const [periodStatusOverrides, setPeriodStatusOverrides] = useState<Record<string, 'PAID' | 'OPEN'>>(() => {
+    try {
+      const saved = localStorage.getItem('finance_app_cc_period_statuses');
+      if (saved) return JSON.parse(saved);
+    } catch (e) {
+      console.warn('Failed to load credit card period status overrides from localStorage');
+    }
+    return {};
+  });
+
+  const handleUpdatePeriodStatus = (accountName: string, closeDate: string, status?: 'PAID' | 'OPEN') => {
+    setPeriodStatusOverrides(prev => {
+      const key = `${accountName}|${closeDate}`;
+      const updated = { ...prev };
+      if (status) {
+        updated[key] = status;
+      } else {
+        delete updated[key];
+      }
+      try {
+        localStorage.setItem('finance_app_cc_period_statuses', JSON.stringify(updated));
+      } catch (e) {
+        console.warn('Failed to save credit card period status overrides to localStorage');
+      }
+      return updated;
+    });
+  };
+
   useEffect(() => {
     // Fetch live FX rates on app mount
     fetch('/api/fx-rates')
@@ -260,6 +289,8 @@ export default function App() {
             displayCurrency={displayCurrency}
             usdArsRate={usdArsRate}
             customBalances={customBalances}
+            periodStatusOverrides={periodStatusOverrides}
+            onUpdatePeriodStatus={handleUpdatePeriodStatus}
             onUpdateAccountBalance={handleUpdateAccountBalance}
             onNavigateToTransactionsWithFilter={handleNavigateToTransactionsWithFilter}
             onAddTransaction={handleAddTransaction}

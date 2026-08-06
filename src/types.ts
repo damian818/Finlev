@@ -30,13 +30,31 @@ export interface CreditCardStatement {
   currency: string;
   expenses: Transaction[];
   payments: Transaction[];
+  isPaid?: boolean;
+  isManualOverride?: boolean;
+  overrideStatus?: 'PAID' | 'OPEN';
+}
+
+export type ClosingRuleType = 
+  | 'FIXED_DAY' 
+  | 'LAST_WEEKDAY' 
+  | 'PREVIOUS_TO_LAST_WEEKDAY' 
+  | 'NTH_WEEKDAY';
+
+export interface CreditCardClosingRule {
+  ruleType: ClosingRuleType;
+  fixedDay?: number; // 1-31 (default 25)
+  weekday?: number; // 0=Sunday, 1=Monday, 2=Tuesday, 3=Wednesday, 4=Thursday, 5=Friday, 6=Saturday
+  nth?: number; // 1=1st, 2=2nd, 3=3rd, 4=4th
+  dueDaysAfterClose?: number; // default 10
 }
 
 export interface CreditCardAccountConfig {
   accountName: string;
   isCreditCard: boolean;
-  statementCloseDay?: number; // e.g. 25
-  paymentDueDay?: number; // e.g. 10
+  statementCloseDay?: number; // legacy
+  closingRule?: CreditCardClosingRule;
+  paymentDueDay?: number;
 }
 
 export interface BudgetGoal {

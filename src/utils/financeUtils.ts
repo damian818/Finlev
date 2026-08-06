@@ -1,4 +1,4 @@
-import { Transaction, DisplayCurrency, RecurringRule, TrendPoint, PredictiveMetrics, BudgetGoal, IdentifiedRecurringItem, RecurringOccurrence, InflationPoint, CreditCardStatement } from '../types';
+import { Transaction, DisplayCurrency, RecurringRule, TrendPoint, PredictiveMetrics, BudgetGoal, IdentifiedRecurringItem, RecurringOccurrence, InflationPoint, CreditCardStatement, CreditCardClosingRule, ClosingRuleType } from '../types';
 
 export function isCreditCardAccount(accountName: string, customCCMap?: Record<string, boolean>): boolean {
   if (customCCMap && customCCMap[accountName] !== undefined) {
@@ -9,94 +9,339 @@ export function isCreditCardAccount(accountName: string, customCCMap?: Record<st
   return keywords.some(kw => nameLower.includes(kw));
 }
 
-export function getStatementCloseDateForTx(dateStr: string, closeDay: number = 25): string {
-  if (!dateStr) return '';
-  const dt = new Date(dateStr);
-  if (isNaN(dt.getTime())) return '';
+/**
+ * Calculates the exact close Date for a given month and year using a CreditCardClosingRule.
+ */
+export function getCloseDateForMonthAndYear(
+  year: number,
+  monthIndex: number, // 0-indexed (0 = Jan, 11 = Dec)
+  rule?: CreditCardClosingRule
+): Date {
+  const normRule: CreditCardClosingRule = rule || { ruleType: 'FIXED_DAY', fixedDay: 25 };
   
-  let year = dt.getFullYear();
-  let month = dt.getMonth(); // 0-indexed
-  const day = dt.getDate();
+  if (normRule.ruleType === 'FIXED_DAY') {
+    const fixedDay = normRule.fixedDay ?? 25;
+    const daysInMonth = new Date(year, monthIndex + 1, 0).getDate();
+    const day = Math.min(fixedDay, daysInMonth);
+    return new Date(year, monthIndex, day);
+  }
 
-  if (day > closeDay) {
-    month += 1;
-    if (month > 11) {
-      month = 0;
-      year += 1;
+  const targetWeekday = normRule.weekday ?? 4; // default 4 = Thursday
+  const daysInMonth = new Date(year, monthIndex + 1, 0).getDate();
+  const matchingDays: number[] = [];
+
+  for (let d = 1; d <= daysInMonth; d++) {
+    const dt = new Date(year, monthIndex, d);
+    if (dt.getDay() === targetWeekday) {
+      matchingDays.push(d);
     }
   }
 
+  if (matchingDays.length === 0) {
+    return new Date(year, monthIndex, 25);
+  }
+
+  let chosenDay = matchingDays[matchingDays.length - 1]; // default last
+
+  if (normRule.ruleType === 'LAST_WEEKDAY') {
+    chosenDay = matchingDays[matchingDays.length - 1];
+  } else if (normRule.ruleType === 'PREVIOUS_TO_LAST_WEEKDAY') {
+    const idx = Math.max(0, matchingDays.length - 2);
+    chosenDay = matchingDays[idx];
+  } else if (normRule.ruleType === 'NTH_WEEKDAY') {
+    const nth = normRule.nth ?? 3;
+    const idx = Math.min(matchingDays.length - 1, Math.max(0, nth - 1));
+    chosenDay = matchingDays[idx];
+  }
+
+  return new Date(year, monthIndex, chosenDay);
+}
+
+/**
+ * Returns human-readable summary label of a CreditCardClosingRule.
+ */
+export function getClosingRuleLabel(rule?: CreditCardClosingRule): string {
+  if (!rule || rule.ruleType === 'FIXED_DAY') {
+    return `Day ${rule?.fixedDay || 25} of each month`;
+  }
+  const weekdays = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+  const nthLabels = ['1st', '2nd', '3rd', '4th'];
+  const wName = weekdays[rule.weekday ?? 4];
+
+  if (rule.ruleType === 'LAST_WEEKDAY') {
+    return `Last ${wName} of month`;
+  }
+  if (rule.ruleType === 'PREVIOUS_TO_LAST_WEEKDAY') {
+    return `Previous to last ${wName} of month`;
+  }
+  if (rule.ruleType === 'NTH_WEEKDAY') {
+    const nthLabel = nthLabels[(rule.nth ?? 3) - 1] || `${rule.nth}th`;
+    return `${nthLabel} ${wName} of month`;
+  }
+  return `Day ${rule.fixedDay || 25}`;
+}
+
+export function getStatementCloseDateForTx(
+  dateStr: string,
+  ruleOrCloseDay?: number | CreditCardClosingRule
+): string {
+  if (!dateStr) return '';
+  const dt = new Date(dateStr);
+  if (isNaN(dt.getTime())) return '';
+
+  const rule: CreditCardClosingRule = typeof ruleOrCloseDay === 'number'
+    ? { ruleType: 'FIXED_DAY', fixedDay: ruleOrCloseDay }
+    : (ruleOrCloseDay || { ruleType: 'FIXED_DAY', fixedDay: 25 });
+
+  const year = dt.getFullYear();
+  const monthIdx = dt.getMonth(); // 0-indexed
+
+  // Calculate close date for current month
+  const closeCurrent = getCloseDateForMonthAndYear(year, monthIdx, rule);
   const pad = (n: number) => String(n).padStart(2, '0');
-  return `${year}-${pad(month + 1)}-${pad(closeDay)}`;
+  const closeCurrentStr = `${closeCurrent.getFullYear()}-${pad(closeCurrent.getMonth() + 1)}-${pad(closeCurrent.getDate())}`;
+
+  // Check if tx date is on or before closeCurrent
+  const txDateOnly = dateStr.substring(0, 10);
+  if (txDateOnly <= closeCurrentStr) {
+    return closeCurrentStr;
+  }
+
+  // Otherwise, it falls into next month's closing date
+  const nextYear = monthIdx === 11 ? year + 1 : year;
+  const nextMonthIdx = monthIdx === 11 ? 0 : monthIdx + 1;
+  const closeNext = getCloseDateForMonthAndYear(nextYear, nextMonthIdx, rule);
+  return `${closeNext.getFullYear()}-${pad(closeNext.getMonth() + 1)}-${pad(closeNext.getDate())}`;
+}
+
+export function getStatementCloseDateForPayment(
+  dateStr: string,
+  ruleOrCloseDay?: number | CreditCardClosingRule
+): string {
+  if (!dateStr) return '';
+  const dt = new Date(dateStr);
+  if (isNaN(dt.getTime())) return '';
+
+  const rule: CreditCardClosingRule = typeof ruleOrCloseDay === 'number'
+    ? { ruleType: 'FIXED_DAY', fixedDay: ruleOrCloseDay }
+    : (ruleOrCloseDay || { ruleType: 'FIXED_DAY', fixedDay: 25 });
+
+  const year = dt.getFullYear();
+  const monthIdx = dt.getMonth(); // 0-indexed
+  const pad = (n: number) => String(n).padStart(2, '0');
+
+  // Calculate close date for current month
+  const closeCurrent = getCloseDateForMonthAndYear(year, monthIdx, rule);
+  const closeCurrentStr = `${closeCurrent.getFullYear()}-${pad(closeCurrent.getMonth() + 1)}-${pad(closeCurrent.getDate())}`;
+
+  const dateOnly = dateStr.substring(0, 10);
+
+  // If the payment date is ON or AFTER current month's close date,
+  // then the statement that closed most recently on or before payment date IS closeCurrentStr!
+  if (dateOnly >= closeCurrentStr) {
+    return closeCurrentStr;
+  }
+
+  // Otherwise, if payment date is BEFORE current month's close date,
+  // the statement that closed most recently on or before payment date is PREVIOUS month's close date!
+  const prevYear = monthIdx === 0 ? year - 1 : year;
+  const prevMonthIdx = monthIdx === 0 ? 11 : monthIdx - 1;
+  const closePrev = getCloseDateForMonthAndYear(prevYear, prevMonthIdx, rule);
+  return `${closePrev.getFullYear()}-${pad(closePrev.getMonth() + 1)}-${pad(closePrev.getDate())}`;
 }
 
 export function getCreditCardStatements(
   transactions: Transaction[],
   accountName: string,
-  defaultCloseDay: number = 25
+  defaultCloseDayOrRule: number | CreditCardClosingRule = 25,
+  statusOverrides?: Record<string, 'PAID' | 'OPEN'>
 ): CreditCardStatement[] {
   const accountTxs = transactions.filter(t => 
     t.account === accountName || t.toAccount === accountName
   );
 
+  const rule: CreditCardClosingRule = typeof defaultCloseDayOrRule === 'number'
+    ? { ruleType: 'FIXED_DAY', fixedDay: defaultCloseDayOrRule }
+    : defaultCloseDayOrRule;
+
+  const dueDaysAfterClose = rule.dueDaysAfterClose ?? 10;
+  const pad = (n: number) => String(n).padStart(2, '0');
+
+  // 1. Separate expenses and payments
+  const expenses: Transaction[] = [];
+  const payments: Transaction[] = [];
+
+  accountTxs.forEach(tx => {
+    const isExpenseOnThisCard = tx.account === accountName && tx.type === 'EXPENSE';
+    const isPaymentToThisCard = tx.toAccount === accountName || tx.type === 'CC_PAYMENT' || (tx.type === 'TRANSFER' && tx.toAccount === accountName) || (tx.account === accountName && tx.type === 'INCOME');
+
+    if (isExpenseOnThisCard) {
+      expenses.push(tx);
+    } else if (isPaymentToThisCard) {
+      payments.push(tx);
+    }
+  });
+
+  // 2. Identify all statement close dates
+  const closeDateSet = new Set<string>();
+
+  expenses.forEach(tx => {
+    let cDate = tx.statementCloseDate;
+    if (!cDate && tx.date) {
+      cDate = getStatementCloseDateForTx(tx.date, rule);
+    }
+    if (cDate) closeDateSet.add(cDate);
+  });
+
+  payments.forEach(tx => {
+    if (tx.date) {
+      const cDate = tx.statementCloseDate || getStatementCloseDateForPayment(tx.date, rule);
+      if (cDate) {
+        closeDateSet.add(cDate);
+      }
+    }
+  });
+
+  // Always ensure at least the current month's statement close date exists
+  const now = new Date();
+  const currentClose = getCloseDateForMonthAndYear(now.getFullYear(), now.getMonth(), rule);
+  const currentCloseStr = `${currentClose.getFullYear()}-${pad(currentClose.getMonth() + 1)}-${pad(currentClose.getDate())}`;
+  closeDateSet.add(currentCloseStr);
+
+  const sortedCloseDates = Array.from(closeDateSet).sort((a, b) => a.localeCompare(b));
+
+  // 3. Create statement structures
   const statementMap = new Map<string, {
     closeDate: string;
     dueDate: string;
     expenses: Transaction[];
     payments: Transaction[];
+    totalExpenses: number;
+    allocatedPaymentsSum: number;
   }>();
 
-  accountTxs.forEach(tx => {
-    // Determine close date
-    let closeDate = tx.statementCloseDate;
-    if (!closeDate && tx.date) {
-      closeDate = getStatementCloseDateForTx(tx.date, defaultCloseDay);
+  sortedCloseDates.forEach(closeDate => {
+    const cDate = new Date(closeDate);
+    let dueDate = '';
+    if (!isNaN(cDate.getTime())) {
+      cDate.setDate(cDate.getDate() + dueDaysAfterClose);
+      dueDate = `${cDate.getFullYear()}-${pad(cDate.getMonth() + 1)}-${pad(cDate.getDate())}`;
     }
-    if (!closeDate) closeDate = 'Current Cycle';
+    statementMap.set(closeDate, {
+      closeDate,
+      dueDate,
+      expenses: [],
+      payments: [],
+      totalExpenses: 0,
+      allocatedPaymentsSum: 0,
+    });
+  });
 
-    if (!statementMap.has(closeDate)) {
-      // Due date is typically ~10 days after close date
-      let dueDate = tx.dueDate;
-      if (!dueDate && closeDate !== 'Current Cycle') {
-        const cDate = new Date(closeDate);
-        if (!isNaN(cDate.getTime())) {
-          cDate.setDate(cDate.getDate() + 10);
-          dueDate = cDate.toISOString().substring(0, 10);
-        }
+  // Assign expenses to their respective statement cycles
+  expenses.forEach(tx => {
+    let cDate = tx.statementCloseDate;
+    if (!cDate && tx.date) {
+      cDate = getStatementCloseDateForTx(tx.date, rule);
+    }
+    if (!cDate) cDate = currentCloseStr;
+
+    if (!statementMap.has(cDate)) {
+      const d = new Date(cDate);
+      let dueDate = '';
+      if (!isNaN(d.getTime())) {
+        d.setDate(d.getDate() + dueDaysAfterClose);
+        dueDate = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
       }
-      statementMap.set(closeDate, {
-        closeDate,
-        dueDate: dueDate || '',
+      statementMap.set(cDate, {
+        closeDate: cDate,
+        dueDate,
         expenses: [],
         payments: [],
+        totalExpenses: 0,
+        allocatedPaymentsSum: 0,
       });
     }
 
-    const stmt = statementMap.get(closeDate)!;
+    const stmt = statementMap.get(cDate)!;
+    stmt.expenses.push(tx);
+    stmt.totalExpenses += (tx.amount || 0);
+  });
 
-    const isExpenseOnThisCard = tx.account === accountName && tx.type === 'EXPENSE';
-    const isPaymentToThisCard = tx.toAccount === accountName || tx.type === 'CC_PAYMENT' || (tx.type === 'TRANSFER' && tx.toAccount === accountName) || (tx.account === accountName && tx.type === 'INCOME');
+  // Sort payments chronologically ascending by date
+  const sortedPayments = [...payments].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
 
-    if (isExpenseOnThisCard) {
-      stmt.expenses.push(tx);
-    } else if (isPaymentToThisCard) {
-      stmt.payments.push(tx);
+  // 4. Allocate payments: assign each payment directly to its corresponding statement cycle based on payment date
+  sortedPayments.forEach(p => {
+    const pAmt = (p.receiveAmount && p.receiveAmount > 0) 
+      ? p.receiveAmount 
+      : ((p.transferAmount && p.transferAmount > 0) ? p.transferAmount : p.amount || 0);
+    
+    if (pAmt <= 0) return;
+
+    // Determine target statement close date for this payment
+    const targetCloseDate = p.statementCloseDate || getStatementCloseDateForPayment(p.date, rule);
+    let stmt = statementMap.get(targetCloseDate);
+
+    // If target close date is not explicitly in statementMap, assign to closest cycle or currentCloseStr
+    if (!stmt) {
+      const activeCloseDates = Array.from(statementMap.keys()).sort((a, b) => a.localeCompare(b));
+      let closestDate = currentCloseStr;
+      for (let i = 0; i < activeCloseDates.length; i++) {
+        if (activeCloseDates[i] >= p.date) {
+          closestDate = activeCloseDates[i];
+          break;
+        }
+      }
+      stmt = statementMap.get(closestDate) || statementMap.get(currentCloseStr);
+    }
+
+    if (stmt) {
+      stmt.allocatedPaymentsSum += pAmt;
+      stmt.payments.push({
+        ...p,
+        amount: pAmt,
+        transferAmount: p.transferAmount ? pAmt : undefined,
+        receiveAmount: p.receiveAmount ? pAmt : undefined,
+      });
     }
   });
 
+  // 5. Build final result array
   const result: CreditCardStatement[] = [];
 
   statementMap.forEach((val, closeDate) => {
-    const totalExpenses = val.expenses.reduce((sum, e) => sum + (e.amount || 0), 0);
-    const totalPayments = val.payments.reduce((sum, p) => {
-      const amt = (p.receiveAmount && p.receiveAmount > 0) 
-        ? p.receiveAmount 
-        : ((p.transferAmount && p.transferAmount > 0) ? p.transferAmount : p.amount || 0);
-      return sum + amt;
-    }, 0);
+    if (val.expenses.length === 0 && val.payments.length === 0 && closeDate !== currentCloseStr) {
+      return;
+    }
 
+    const totalExpenses = val.totalExpenses;
+    const totalPayments = val.allocatedPaymentsSum;
     const currency = val.expenses[0]?.currency || val.payments[0]?.currency || 'ARS';
     const periodMonth = closeDate.substring(0, 7);
+
+    // All past historical statement periods (closeDate < currentCloseStr) are considered Paid
+    const isPastPeriod = closeDate < currentCloseStr;
+    const rawNetDue = totalExpenses - totalPayments;
+
+    const overrideKey = `${accountName}|${closeDate}`;
+    const overrideStatus = statusOverrides?.[overrideKey] || statusOverrides?.[closeDate];
+
+    let isPaid: boolean;
+    let netDue: number;
+    let isManualOverride = false;
+
+    if (overrideStatus === 'PAID') {
+      isPaid = true;
+      netDue = 0;
+      isManualOverride = true;
+    } else if (overrideStatus === 'OPEN') {
+      isPaid = false;
+      netDue = Math.max(0, rawNetDue > 0 ? rawNetDue : totalExpenses);
+      isManualOverride = true;
+    } else {
+      netDue = isPastPeriod ? 0 : Math.max(0, rawNetDue);
+      isPaid = isPastPeriod || (rawNetDue <= 0);
+    }
 
     result.push({
       accountName,
@@ -105,10 +350,13 @@ export function getCreditCardStatements(
       dueDate: val.dueDate,
       totalExpenses,
       totalPayments,
-      netDue: totalExpenses - totalPayments,
+      netDue,
       currency,
       expenses: val.expenses.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()),
       payments: val.payments.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()),
+      isPaid,
+      isManualOverride,
+      overrideStatus,
     });
   });
 
@@ -973,5 +1221,55 @@ export function detectInstallmentPlans(
     return bConverted - aConverted || b.distinctMonthsCount - a.distinctMonthsCount || a.title.localeCompare(b.title);
   });
 }
+
+/**
+ * Calculates the next closing date for a credit card account based on current date/time and closing rule.
+ */
+export function getNextCloseDate(rule?: CreditCardClosingRule, fromDateStr?: string): string {
+  const refDateStr = fromDateStr || new Date().toISOString().substring(0, 10);
+  return getStatementCloseDateForTx(refDateStr, rule);
+}
+
+/**
+ * Returns the index of the current active statement cycle (matching current date/time)
+ * from a list of statements sorted descending by closeDate.
+ */
+export function getCurrentStatementIndex(statements: CreditCardStatement[], rule?: CreditCardClosingRule): number {
+  if (!statements || statements.length === 0) return 0;
+
+  const currentCloseStr = getNextCloseDate(rule);
+
+  const idx = statements.findIndex(s => s.closeDate === currentCloseStr);
+  if (idx !== -1) return idx;
+
+  // If exact statement for currentCloseStr is not present, select statement closest to currentCloseStr
+  let closestIdx = 0;
+  let minDiff = Infinity;
+  const currentVal = new Date(currentCloseStr).getTime();
+
+  statements.forEach((stmt, i) => {
+    const stmtVal = new Date(stmt.closeDate).getTime();
+    const diff = Math.abs(stmtVal - currentVal);
+    if (diff < minDiff) {
+      minDiff = diff;
+      closestIdx = i;
+    }
+  });
+
+  return closestIdx;
+}
+
+export function getCurrentStatement(statements: CreditCardStatement[], rule?: CreditCardClosingRule): CreditCardStatement | undefined {
+  if (!statements || statements.length === 0) return undefined;
+  const idx = getCurrentStatementIndex(statements, rule);
+  return statements[idx];
+}
+
+// Aliases for compatibility
+export const getRelevantStatementIndex = (statements: CreditCardStatement[], rule?: CreditCardClosingRule) =>
+  getCurrentStatementIndex(statements, rule);
+
+export const getRelevantStatement = (statements: CreditCardStatement[], rule?: CreditCardClosingRule) =>
+  getCurrentStatement(statements, rule);
 
 
