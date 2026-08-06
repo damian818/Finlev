@@ -6,7 +6,7 @@ export interface Transaction {
   account: string;
   amount: number;
   currency: string; // 'ARS' | 'USD'
-  type: 'EXPENSE' | 'INCOME' | 'TRANSFER';
+  type: 'EXPENSE' | 'INCOME' | 'TRANSFER' | 'CC_PAYMENT';
   transferAmount?: number;
   transferCurrency?: string;
   toAccount?: string;
@@ -15,6 +15,28 @@ export interface Transaction {
   description?: string;
   dueDate?: string;
   installments?: string; // e.g. "6/6"
+  statementCloseDate?: string; // e.g. "2026-08-25"
+  isPaid?: boolean;
+}
+
+export interface CreditCardStatement {
+  accountName: string;
+  statementPeriod: string; // e.g. "2026-08" or "Aug 2026"
+  closeDate: string; // e.g. "2026-08-25"
+  dueDate?: string; // e.g. "2026-09-05"
+  totalExpenses: number;
+  totalPayments: number;
+  netDue: number;
+  currency: string;
+  expenses: Transaction[];
+  payments: Transaction[];
+}
+
+export interface CreditCardAccountConfig {
+  accountName: string;
+  isCreditCard: boolean;
+  statementCloseDay?: number; // e.g. 25
+  paymentDueDay?: number; // e.g. 10
 }
 
 export interface BudgetGoal {

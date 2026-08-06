@@ -262,6 +262,7 @@ export default function App() {
             customBalances={customBalances}
             onUpdateAccountBalance={handleUpdateAccountBalance}
             onNavigateToTransactionsWithFilter={handleNavigateToTransactionsWithFilter}
+            onAddTransaction={handleAddTransaction}
           />
         )}
         {currentTab === 'budgets' && (

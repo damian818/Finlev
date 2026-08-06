@@ -1,8 +1,9 @@
 import React, { useState, useMemo } from 'react';
 import { Transaction, DisplayCurrency, AccountCustomBalance, TransactionFilter } from '../types';
-import { computeAccountBalances, formatCurrency } from '../utils/financeUtils';
-import { Wallet, DollarSign, Landmark, Edit3, Check, RotateCcw, HelpCircle, History, ArrowRightLeft, ExternalLink } from 'lucide-react';
+import { computeAccountBalances, formatCurrency, isCreditCardAccount, getCreditCardStatements } from '../utils/financeUtils';
+import { Wallet, DollarSign, Landmark, Edit3, Check, RotateCcw, HelpCircle, History, ArrowRightLeft, ExternalLink, CreditCard, ChevronRight, AlertCircle, Sparkles } from 'lucide-react';
 import { ResponsiveContainer, PieChart, Pie, Cell, Tooltip } from 'recharts';
+import { CreditCardDetailModal } from './CreditCardDetailModal';
 
 interface AccountsTabProps {
   transactions: Transaction[];
@@ -11,6 +12,7 @@ interface AccountsTabProps {
   customBalances: Record<string, AccountCustomBalance>;
   onUpdateAccountBalance: (accountName: string, currentBalance: number, currency: string) => void;
   onNavigateToTransactionsWithFilter: (filter: TransactionFilter) => void;
+  onAddTransaction: (tx: Transaction) => void;
 }
 
 const COLORS = ['#34d399', '#60a5fa', '#f59e0b', '#a78bfa', '#f43f5e', '#38bdf8', '#818cf8', '#fb7185'];
@@ -22,9 +24,30 @@ export function AccountsTab({
   customBalances,
   onUpdateAccountBalance,
   onNavigateToTransactionsWithFilter,
+  onAddTransaction,
 }: AccountsTabProps) {
   const [editingAccount, setEditingAccount] = useState<string | null>(null);
   const [editValue, setEditValue] = useState<string>('');
+
+  // Selected credit card for detail modal
+  const [selectedCardAccount, setSelectedCardAccount] = useState<string | null>(null);
+
+  // Custom user overrides for account classification (persisted in local state/storage)
+  const [customCCMap, setCustomCCMap] = useState<Record<string, boolean>>(() => {
+    try {
+      const saved = localStorage.getItem('finance_app_cc_map');
+      if (saved) return JSON.parse(saved);
+    } catch (e) {}
+    return {};
+  });
+
+  const toggleAccountClassification = (accName: string, currentIsCC: boolean) => {
+    const updated = { ...customCCMap, [accName]: !currentIsCC };
+    setCustomCCMap(updated);
+    try {
+      localStorage.setItem('finance_app_cc_map', JSON.stringify(updated));
+    } catch (e) {}
+  };
 
   // Calculate net transaction deltas per account
   const accountDeltas: Record<string, { netDelta: number; currency: string; txCount: number }> = {};
@@ -41,7 +64,7 @@ export function AccountsTab({
       accountDeltas[acc].netDelta += amt;
     } else if (tx.type === 'EXPENSE') {
       accountDeltas[acc].netDelta -= amt;
-    } else if (tx.type === 'TRANSFER') {
+    } else if (tx.type === 'TRANSFER' || tx.type === 'CC_PAYMENT') {
       const outflow = (tx.transferAmount && tx.transferAmount > 0) ? tx.transferAmount : amt;
       accountDeltas[acc].netDelta -= outflow;
 
@@ -60,7 +83,7 @@ export function AccountsTab({
 
   const accountNames = Array.from(new Set([...Object.keys(accountDeltas), ...Object.keys(customBalances)])).sort();
 
-  // Reconstructed summary list
+  // Reconstructed summary list with Credit Card classification
   const reconstructedAccounts = accountNames.map(name => {
     const deltaObj = accountDeltas[name] || { netDelta: 0, currency: 'ARS', txCount: 0 };
     const custom = customBalances[name];
@@ -76,11 +99,18 @@ export function AccountsTab({
     const currentARS = isUsd ? currentBalance * usdArsRate : currentBalance;
     const currentUSD = isUsd ? currentBalance : (usdArsRate > 0 ? currentBalance / usdArsRate : 0);
 
+    const isCC = isCreditCardAccount(name, customCCMap);
+
+    // If it's a credit card, compute statement summary
+    const statements = isCC ? getCreditCardStatements(transactions, name, 25) : [];
+    const latestStatement = statements[0];
+
     return {
       accountName: name,
       currency,
       originalCurrency: currency,
       isUsd,
+      isCreditCard: isCC,
       currentBalance,
       balanceOriginal: currentBalance,
       netDelta: deltaObj.netDelta,
@@ -88,22 +118,40 @@ export function AccountsTab({
       currentARS,
       currentUSD,
       txCount: deltaObj.txCount,
-      hasCustom: custom !== undefined
+      hasCustom: custom !== undefined,
+      latestStatement,
     };
-  }).filter(acc => acc.txCount > 0);
+  }).filter(acc => acc.txCount > 0 || acc.hasCustom);
 
-  const totalARS = reconstructedAccounts.reduce((acc, curr) => acc + (curr.currentARS > 0 ? curr.currentARS : 0), 0);
-  const totalUSD = reconstructedAccounts.reduce((acc, curr) => acc + (curr.currentUSD > 0 ? curr.currentUSD : 0), 0);
+  // Separate Liquid Accounts vs Credit Card Accounts
+  const liquidAccounts = reconstructedAccounts.filter(a => !a.isCreditCard);
+  const creditCardAccounts = reconstructedAccounts.filter(a => a.isCreditCard);
+
+  // Totals calculations
+  const totalLiquidARS = liquidAccounts.reduce((acc, curr) => acc + (curr.currentARS > 0 ? curr.currentARS : 0), 0);
+  const totalLiquidUSD = liquidAccounts.reduce((acc, curr) => acc + (curr.currentUSD > 0 ? curr.currentUSD : 0), 0);
+
+  // Credit Card Outstanding Debt (Expenses minus payments)
+  const totalCcDebtARS = creditCardAccounts.reduce((acc, curr) => {
+    const debt = curr.latestStatement ? Math.max(0, curr.latestStatement.netDue) : Math.abs(Math.min(0, curr.currentBalance));
+    const debtARS = curr.isUsd ? debt * usdArsRate : debt;
+    return acc + debtARS;
+  }, 0);
+
+  const totalCcDebtUSD = usdArsRate > 0 ? totalCcDebtARS / usdArsRate : 0;
+
+  const netWorthARS = totalLiquidARS - totalCcDebtARS;
+  const netWorthUSD = totalLiquidUSD - totalCcDebtUSD;
 
   const pieData = useMemo(() => {
-    return reconstructedAccounts
+    return liquidAccounts
       .filter(acc => (displayCurrency === 'USD' ? acc.currentUSD : acc.currentARS) > 0)
       .map(acc => ({
         name: acc.accountName,
         value: displayCurrency === 'USD' ? acc.currentUSD : acc.currentARS
       }))
       .sort((a, b) => b.value - a.value);
-  }, [reconstructedAccounts, displayCurrency]);
+  }, [liquidAccounts, displayCurrency]);
 
   const handleStartEdit = (accName: string, curVal: number) => {
     setEditingAccount(accName);
@@ -127,51 +175,164 @@ export function AccountsTab({
             <History className="w-5 h-5" />
           </div>
           <div>
-            <h4 className="text-sm font-semibold text-slate-100">Account Balance Reconstruction</h4>
+            <h4 className="text-sm font-semibold text-slate-100 flex items-center gap-2">
+              <span>Account & Credit Card Management</span>
+              <span className="text-[10px] px-2 py-0.5 rounded bg-purple-500/10 text-purple-400 border border-purple-500/20 font-medium">
+                Credit Cards Isolated
+              </span>
+            </h4>
             <p className="text-xs text-slate-400 mt-0.5">
-              CSV bank statements do not include initial account balances. Enter your <strong>actual current bank balance</strong> below and we will automatically reconstruct your historical account starting points backward.
+              Liquid bank accounts track cash assets. Credit card expenses are grouped into <strong>statement cycles with close dates</strong> and settled via explicit credit card payments.
             </p>
           </div>
         </div>
       </div>
 
-      {/* Summary Totals Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+      {/* Financial Overview Metrics Cards */}
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         <div className="bg-[#161b22] p-5 rounded-xl border border-slate-800 shadow-sm flex items-center justify-between">
           <div>
-            <p className="text-xs font-medium text-slate-400 uppercase tracking-wider">Total Net Liquid (ARS)</p>
-            <h3 className="text-2xl font-bold text-slate-100 mt-1">{formatCurrency(totalARS, 'ARS')}</h3>
-            <span className="text-[10px] text-slate-500 mt-1 block">Converted at live market rates</span>
+            <p className="text-xs font-medium text-slate-400 uppercase tracking-wider">Liquid Bank Cash</p>
+            <h3 className="text-xl font-bold text-emerald-400 mt-1">
+              {formatCurrency(displayCurrency === 'USD' ? totalLiquidUSD : totalLiquidARS, displayCurrency)}
+            </h3>
+            <span className="text-[10px] text-slate-500 mt-1 block">Available liquid funds</span>
           </div>
-          <div className="p-3 bg-slate-800 border border-slate-700 text-white rounded-xl shadow-inner">
-            <Landmark className="w-6 h-6" />
+          <div className="p-3 bg-emerald-950/80 border border-emerald-800/60 text-emerald-300 rounded-xl shadow-inner">
+            <Landmark className="w-5 h-5" />
           </div>
         </div>
 
         <div className="bg-[#161b22] p-5 rounded-xl border border-slate-800 shadow-sm flex items-center justify-between">
           <div>
-            <p className="text-xs font-medium text-slate-400 uppercase tracking-wider">Total Net Liquid (USD)</p>
-            <h3 className="text-2xl font-bold text-slate-100 mt-1">{formatCurrency(totalUSD, 'USD')}</h3>
-            <span className="text-[10px] text-slate-500 mt-1 block">Combined foreign & domestic balance</span>
+            <p className="text-xs font-medium text-slate-400 uppercase tracking-wider">Credit Card Statement Debt</p>
+            <h3 className="text-xl font-bold text-amber-400 mt-1">
+              {formatCurrency(displayCurrency === 'USD' ? totalCcDebtUSD : totalCcDebtARS, displayCurrency)}
+            </h3>
+            <span className="text-[10px] text-slate-500 mt-1 block">Pending statement liabilities</span>
           </div>
-          <div className="p-3 bg-emerald-950/80 border border-emerald-800/60 text-emerald-300 rounded-xl shadow-inner">
-            <DollarSign className="w-6 h-6" />
+          <div className="p-3 bg-amber-950/80 border border-amber-800/60 text-amber-300 rounded-xl shadow-inner">
+            <CreditCard className="w-5 h-5" />
+          </div>
+        </div>
+
+        <div className="bg-[#161b22] p-5 rounded-xl border border-slate-800 shadow-sm flex items-center justify-between">
+          <div>
+            <p className="text-xs font-medium text-slate-400 uppercase tracking-wider">Net Liquid Wealth</p>
+            <h3 className={`text-xl font-bold mt-1 ${netWorthARS >= 0 ? 'text-slate-100' : 'text-rose-400'}`}>
+              {formatCurrency(displayCurrency === 'USD' ? netWorthUSD : netWorthARS, displayCurrency)}
+            </h3>
+            <span className="text-[10px] text-slate-500 mt-1 block">Liquid Cash minus Card Debt</span>
+          </div>
+          <div className="p-3 bg-slate-800 border border-slate-700 text-white rounded-xl shadow-inner">
+            <Wallet className="w-5 h-5" />
           </div>
         </div>
       </div>
 
+      {/* Credit Card Accounts Section */}
+      <div className="bg-[#161b22] p-5 rounded-xl border border-slate-800 shadow-sm space-y-4">
+        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2 border-b border-slate-800 pb-3">
+          <div>
+            <h3 className="text-sm font-bold text-slate-100 flex items-center gap-2">
+              <CreditCard className="w-4 h-4 text-purple-400" />
+              <span>Credit Card Accounts & Statement Cycles</span>
+            </h3>
+            <p className="text-xs text-slate-400">
+              Track itemized expenses inside each credit card and record payments from main bank accounts when settling statements.
+            </p>
+          </div>
+        </div>
+
+        {creditCardAccounts.length === 0 ? (
+          <div className="p-6 text-center text-slate-500 bg-[#121620] rounded-xl border border-slate-800 text-xs">
+            No credit card accounts detected. Toggle any account below to classify it as a Credit Card.
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {creditCardAccounts.map((acc) => {
+              const stmt = acc.latestStatement;
+              const netDue = stmt ? stmt.netDue : 0;
+
+              return (
+                <div
+                  key={acc.accountName}
+                  className="p-4 rounded-xl border border-purple-500/20 bg-[#121620] hover:border-purple-500/50 transition-all space-y-3"
+                >
+                  <div className="flex justify-between items-start">
+                    <div>
+                      <div className="flex items-center space-x-2">
+                        <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 bg-purple-500/10 text-purple-300 border border-purple-500/20 rounded-md flex items-center gap-1">
+                          <CreditCard className="w-3 h-3" /> Credit Card ({acc.currency})
+                        </span>
+                        <button
+                          onClick={() => toggleAccountClassification(acc.accountName, true)}
+                          className="text-[9px] px-1.5 py-0.5 rounded bg-slate-800 text-slate-400 hover:text-slate-200 border border-slate-700"
+                          title="Switch to Bank Account"
+                        >
+                          Change type
+                        </button>
+                      </div>
+                      <h4 className="text-sm font-bold text-slate-100 mt-1.5">{acc.accountName}</h4>
+                    </div>
+
+                    <button
+                      onClick={() => setSelectedCardAccount(acc.accountName)}
+                      className="px-3 py-1.5 bg-purple-600/80 hover:bg-purple-600 border border-purple-500 text-white rounded-lg text-xs font-semibold flex items-center gap-1 transition-colors shadow-sm"
+                    >
+                      <span>Details & Statement</span>
+                      <ChevronRight className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+
+                  {/* Statement metrics box */}
+                  <div className="p-3 bg-[#161b22] rounded-xl border border-slate-800 grid grid-cols-2 gap-3 text-xs">
+                    <div>
+                      <span className="text-[10px] text-slate-400 font-medium block">Latest Statement Due:</span>
+                      <span className={`text-base font-bold ${netDue > 0 ? 'text-amber-400' : 'text-emerald-400'}`}>
+                        {formatCurrency(netDue, acc.originalCurrency as DisplayCurrency)}
+                      </span>
+                    </div>
+
+                    <div className="text-right">
+                      <span className="text-[10px] text-slate-400 font-medium block">Closing Date:</span>
+                      <span className="text-xs font-semibold text-slate-200 font-mono">
+                        {stmt?.closeDate || '25th of month'}
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="flex justify-between items-center text-[11px] text-slate-400 pt-1">
+                    <span>{acc.txCount} recorded card transactions</span>
+                    <button
+                      onClick={() => setSelectedCardAccount(acc.accountName)}
+                      className="text-purple-400 hover:text-purple-300 font-medium underline"
+                    >
+                      Record Statement Payment
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Accounts List & Balance Editor */}
+        {/* Liquid Accounts List & Balance Editor */}
         <div className="bg-[#161b22] p-5 rounded-xl border border-slate-800 shadow-sm lg:col-span-2 space-y-4">
           <div className="flex items-center justify-between">
             <div>
-              <h3 className="text-sm font-semibold text-slate-100">Live & Reconstructed Account Balances</h3>
-              <p className="text-xs text-slate-400">Click the edit pencil on any account to set its exact live bank balance.</p>
+              <h3 className="text-sm font-semibold text-slate-100 flex items-center gap-2">
+                <Landmark className="w-4 h-4 text-emerald-400" />
+                <span>Liquid Bank Accounts & Cash</span>
+              </h3>
+              <p className="text-xs text-slate-400">Click the edit button on any account to adjust its exact live bank balance.</p>
             </div>
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            {reconstructedAccounts.map((acc) => {
+            {liquidAccounts.map((acc) => {
               const isEditing = editingAccount === acc.accountName;
 
               return (
@@ -179,7 +340,6 @@ export function AccountsTab({
                   key={acc.accountName} 
                   className="p-4 rounded-xl border border-slate-800 bg-[#121620] hover:border-emerald-500/50 hover:bg-[#1a212d] transition-all cursor-pointer space-y-3 group"
                   onClick={(e) => {
-                    // Don't navigate if clicking the edit button or input
                     if ((e.target as HTMLElement).closest('button') || (e.target as HTMLElement).closest('input')) return;
                     onNavigateToTransactionsWithFilter({ account: acc.accountName });
                   }}
@@ -192,9 +352,19 @@ export function AccountsTab({
                         </span>
                         {acc.hasCustom && (
                           <span className="text-[9px] px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 font-medium">
-                            Live Calibrated
+                            Calibrated
                           </span>
                         )}
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            toggleAccountClassification(acc.accountName, false);
+                          }}
+                          className="text-[9px] px-1.5 py-0.5 rounded bg-slate-800 text-slate-500 hover:text-slate-300 border border-slate-700"
+                          title="Classify as Credit Card"
+                        >
+                          Make Credit Card
+                        </button>
                       </div>
                       <h4 className="text-sm font-bold text-slate-100 mt-1.5 flex items-center">
                         {acc.accountName}
@@ -233,7 +403,7 @@ export function AccountsTab({
 
                     {isEditing ? (
                       <div className="flex items-center space-x-2 mt-1">
-                        <span className="text-xs text-slate-400 font-bold">{acc.isUsd ? '$' : '$'}</span>
+                        <span className="text-xs text-slate-400 font-bold">$</span>
                         <input
                           type="number"
                           step="any"
@@ -261,29 +431,6 @@ export function AccountsTab({
                       </div>
                     )}
                   </div>
-
-                  {/* Backward Reconstruction Details */}
-                  <div className="pt-2 border-t border-slate-800/80 text-[11px] space-y-1.5 text-slate-400">
-                    <div className="flex justify-between items-center">
-                      <span className="flex items-center">
-                        <ArrowRightLeft className="w-3 h-3 mr-1 text-slate-500" />
-                        Uploaded History Net Flow:
-                      </span>
-                      <span className={`font-semibold ${acc.netDelta >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
-                        {acc.netDelta >= 0 ? '+' : ''}{acc.isUsd ? `$${acc.netDelta.toLocaleString()}` : `$${acc.netDelta.toLocaleString()}`}
-                      </span>
-                    </div>
-
-                    <div className="flex justify-between items-center">
-                      <span className="flex items-center text-slate-400">
-                        <History className="w-3 h-3 mr-1 text-slate-500" />
-                        Reconstructed Starting Balance:
-                      </span>
-                      <span className="font-semibold text-slate-300">
-                        {acc.isUsd ? `$${acc.reconstructedInitialBalance.toLocaleString('en-US', { maximumFractionDigits: 2 })}` : `$${acc.reconstructedInitialBalance.toLocaleString('es-AR')}`}
-                      </span>
-                    </div>
-                  </div>
                 </div>
               );
             })}
@@ -293,7 +440,7 @@ export function AccountsTab({
         {/* Asset Distribution */}
         <div className="bg-[#161b22] p-5 rounded-xl border border-slate-800 shadow-sm flex flex-col">
           <div className="flex items-center justify-between mb-4">
-            <h3 className="text-sm font-semibold text-slate-100">Current Asset Distribution</h3>
+            <h3 className="text-sm font-semibold text-slate-100">Liquid Asset Distribution</h3>
             <span className="text-[10px] px-2 py-0.5 rounded-full bg-slate-800 text-slate-400 border border-slate-700 font-mono uppercase">
               By {displayCurrency}
             </span>
@@ -302,7 +449,7 @@ export function AccountsTab({
           <div className="h-64 w-full relative">
             {pieData.length === 0 ? (
               <div className="h-full flex items-center justify-center text-xs text-slate-500">
-                No positive balances found
+                No positive liquid balances found
               </div>
             ) : (
               <>
@@ -336,7 +483,7 @@ export function AccountsTab({
                       content={({ active, payload }) => {
                         if (active && payload && payload.length) {
                           const data = payload[0];
-                          const percent = ((Number(data.value) / (displayCurrency === 'USD' ? totalUSD : totalARS)) * 100).toFixed(1);
+                          const percent = ((Number(data.value) / (displayCurrency === 'USD' ? totalLiquidUSD : totalLiquidARS)) * 100).toFixed(1);
                           return (
                             <div className="bg-[#161b22] border border-slate-700 p-3 rounded-lg shadow-xl text-xs space-y-1.5">
                               <p className="font-bold text-slate-200">{data.name}</p>
@@ -359,9 +506,9 @@ export function AccountsTab({
                 
                 {/* Center Content for Donut */}
                 <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
-                  <span className="text-[10px] text-slate-500 uppercase tracking-widest font-medium">Total</span>
+                  <span className="text-[10px] text-slate-500 uppercase tracking-widest font-medium">Liquid Total</span>
                   <span className="text-sm font-bold text-slate-100">
-                    {formatCurrency(displayCurrency === 'USD' ? totalUSD : totalARS, displayCurrency)}
+                    {formatCurrency(displayCurrency === 'USD' ? totalLiquidUSD : totalLiquidARS, displayCurrency)}
                   </span>
                 </div>
               </>
@@ -371,7 +518,7 @@ export function AccountsTab({
           {/* Legend / Breakdown List */}
           <div className="mt-4 space-y-2 overflow-y-auto max-h-48 pr-1 custom-scrollbar">
             {pieData.map((entry, index) => {
-              const percent = ((entry.value / (displayCurrency === 'USD' ? totalUSD : totalARS)) * 100).toFixed(1);
+              const percent = ((entry.value / (displayCurrency === 'USD' ? totalLiquidUSD : totalLiquidARS)) * 100).toFixed(1);
               return (
                 <div 
                   key={entry.name}
@@ -395,6 +542,21 @@ export function AccountsTab({
           </div>
         </div>
       </div>
+
+      {/* Credit Card Detailed View Modal */}
+      {selectedCardAccount && (
+        <CreditCardDetailModal
+          isOpen={!!selectedCardAccount}
+          onClose={() => setSelectedCardAccount(null)}
+          accountName={selectedCardAccount}
+          transactions={transactions}
+          displayCurrency={displayCurrency}
+          usdArsRate={usdArsRate}
+          onAddTransaction={onAddTransaction}
+          onNavigateToTransactionsWithFilter={onNavigateToTransactionsWithFilter}
+        />
+      )}
     </div>
   );
 }
+

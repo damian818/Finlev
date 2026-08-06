@@ -69,17 +69,18 @@ export function TransactionsTab({
 
   const filtered = useMemo(() => {
     return transactions.filter(t => {
-      // Exclude transfers from the main list as requested
+      // Exclude standard transfers from the main list as requested, but keep CC_PAYMENT
       if (t.type === 'TRANSFER') return false;
 
       const matchSearch = !searchTerm || 
                           (t.title && t.title.toLowerCase().includes(searchTerm.toLowerCase())) ||
                           (t.category && t.category.toLowerCase().includes(searchTerm.toLowerCase())) ||
                           (t.account && t.account.toLowerCase().includes(searchTerm.toLowerCase())) ||
+                          (t.toAccount && t.toAccount.toLowerCase().includes(searchTerm.toLowerCase())) ||
                           (t.description && t.description.toLowerCase().includes(searchTerm.toLowerCase()));
       const matchType = selectedType === 'ALL' || t.type === selectedType;
       const matchCat = selectedCategory === 'ALL' || t.category === selectedCategory;
-      const matchAcc = selectedAccount === 'ALL' || t.account === selectedAccount;
+      const matchAcc = selectedAccount === 'ALL' || t.account === selectedAccount || t.toAccount === selectedAccount;
       const txMonth = t.date ? t.date.substring(0, 7) : '';
       const matchMonth = selectedMonth === 'ALL' || txMonth === selectedMonth;
       return matchSearch && matchType && matchCat && matchAcc && matchMonth;
@@ -157,6 +158,7 @@ export function TransactionsTab({
             <option value="ALL">All Types</option>
             <option value="EXPENSE">Expense</option>
             <option value="INCOME">Income</option>
+            <option value="CC_PAYMENT">Credit Card Payment</option>
           </select>
 
           <select
@@ -241,14 +243,24 @@ export function TransactionsTab({
                           {tx.category || 'General'}
                         </span>
                       </td>
-                      <td className="p-3 text-slate-300 font-medium">{tx.account}</td>
+                      <td className="p-3 text-slate-300 font-medium">
+                        {tx.account}
+                        {tx.toAccount && <span className="text-slate-500 text-[10px] block">→ {tx.toAccount}</span>}
+                      </td>
                       <td className="p-3">
                         <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold ${
                           tx.type === 'INCOME' ? 'bg-emerald-950/80 text-emerald-300 border border-emerald-800/50' :
-                          tx.type === 'EXPENSE' ? 'bg-rose-950/80 text-rose-300 border border-rose-800/50' : 'bg-blue-950/80 text-blue-300 border border-blue-800/50'
+                          tx.type === 'EXPENSE' ? 'bg-rose-950/80 text-rose-300 border border-rose-800/50' :
+                          tx.type === 'CC_PAYMENT' ? 'bg-purple-950/80 text-purple-300 border border-purple-800/50' :
+                          'bg-blue-950/80 text-blue-300 border border-blue-800/50'
                         }`}>
-                          {tx.type}
+                          {tx.type === 'CC_PAYMENT' ? 'CC PAYMENT' : tx.type}
                         </span>
+                        {tx.installments && (
+                          <span className="ml-1 text-[9px] px-1.5 py-0.2 rounded bg-amber-500/10 text-amber-400 font-bold border border-amber-500/20">
+                            {tx.installments}
+                          </span>
+                        )}
                       </td>
                       <td className="p-3 text-right font-semibold text-slate-200">
                         {tx.currency} {tx.amount.toLocaleString()}

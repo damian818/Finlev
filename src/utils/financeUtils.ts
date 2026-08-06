@@ -1,4 +1,119 @@
-import { Transaction, DisplayCurrency, RecurringRule, TrendPoint, PredictiveMetrics, BudgetGoal, IdentifiedRecurringItem, RecurringOccurrence, InflationPoint } from '../types';
+import { Transaction, DisplayCurrency, RecurringRule, TrendPoint, PredictiveMetrics, BudgetGoal, IdentifiedRecurringItem, RecurringOccurrence, InflationPoint, CreditCardStatement } from '../types';
+
+export function isCreditCardAccount(accountName: string, customCCMap?: Record<string, boolean>): boolean {
+  if (customCCMap && customCCMap[accountName] !== undefined) {
+    return customCCMap[accountName];
+  }
+  const nameLower = (accountName || '').toLowerCase();
+  const keywords = ['visa', 'master', 'tarjeta', 'tc', 'credit', 'amex', 'naranja', 'comafi', 'caball', 'american express'];
+  return keywords.some(kw => nameLower.includes(kw));
+}
+
+export function getStatementCloseDateForTx(dateStr: string, closeDay: number = 25): string {
+  if (!dateStr) return '';
+  const dt = new Date(dateStr);
+  if (isNaN(dt.getTime())) return '';
+  
+  let year = dt.getFullYear();
+  let month = dt.getMonth(); // 0-indexed
+  const day = dt.getDate();
+
+  if (day > closeDay) {
+    month += 1;
+    if (month > 11) {
+      month = 0;
+      year += 1;
+    }
+  }
+
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${year}-${pad(month + 1)}-${pad(closeDay)}`;
+}
+
+export function getCreditCardStatements(
+  transactions: Transaction[],
+  accountName: string,
+  defaultCloseDay: number = 25
+): CreditCardStatement[] {
+  const accountTxs = transactions.filter(t => 
+    t.account === accountName || t.toAccount === accountName
+  );
+
+  const statementMap = new Map<string, {
+    closeDate: string;
+    dueDate: string;
+    expenses: Transaction[];
+    payments: Transaction[];
+  }>();
+
+  accountTxs.forEach(tx => {
+    // Determine close date
+    let closeDate = tx.statementCloseDate;
+    if (!closeDate && tx.date) {
+      closeDate = getStatementCloseDateForTx(tx.date, defaultCloseDay);
+    }
+    if (!closeDate) closeDate = 'Current Cycle';
+
+    if (!statementMap.has(closeDate)) {
+      // Due date is typically ~10 days after close date
+      let dueDate = tx.dueDate;
+      if (!dueDate && closeDate !== 'Current Cycle') {
+        const cDate = new Date(closeDate);
+        if (!isNaN(cDate.getTime())) {
+          cDate.setDate(cDate.getDate() + 10);
+          dueDate = cDate.toISOString().substring(0, 10);
+        }
+      }
+      statementMap.set(closeDate, {
+        closeDate,
+        dueDate: dueDate || '',
+        expenses: [],
+        payments: [],
+      });
+    }
+
+    const stmt = statementMap.get(closeDate)!;
+
+    const isExpenseOnThisCard = tx.account === accountName && tx.type === 'EXPENSE';
+    const isPaymentToThisCard = tx.toAccount === accountName || tx.type === 'CC_PAYMENT' || (tx.type === 'TRANSFER' && tx.toAccount === accountName) || (tx.account === accountName && tx.type === 'INCOME');
+
+    if (isExpenseOnThisCard) {
+      stmt.expenses.push(tx);
+    } else if (isPaymentToThisCard) {
+      stmt.payments.push(tx);
+    }
+  });
+
+  const result: CreditCardStatement[] = [];
+
+  statementMap.forEach((val, closeDate) => {
+    const totalExpenses = val.expenses.reduce((sum, e) => sum + (e.amount || 0), 0);
+    const totalPayments = val.payments.reduce((sum, p) => {
+      const amt = (p.receiveAmount && p.receiveAmount > 0) 
+        ? p.receiveAmount 
+        : ((p.transferAmount && p.transferAmount > 0) ? p.transferAmount : p.amount || 0);
+      return sum + amt;
+    }, 0);
+
+    const currency = val.expenses[0]?.currency || val.payments[0]?.currency || 'ARS';
+    const periodMonth = closeDate.substring(0, 7);
+
+    result.push({
+      accountName,
+      statementPeriod: periodMonth,
+      closeDate,
+      dueDate: val.dueDate,
+      totalExpenses,
+      totalPayments,
+      netDue: totalExpenses - totalPayments,
+      currency,
+      expenses: val.expenses.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()),
+      payments: val.payments.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()),
+    });
+  });
+
+  return result.sort((a, b) => b.closeDate.localeCompare(a.closeDate));
+}
 import { defaultRecurringRules, defaultBudgets, historicalInflationAndFX } from '../data/defaultTransactions';
 
 // Cache for historical rates derived from explicit user transfers
@@ -171,8 +286,8 @@ export function computeAccountBalances(
       map[acc].balance += amt;
     } else if (tx.type === 'EXPENSE') {
       map[acc].balance -= amt;
-    } else if (tx.type === 'TRANSFER') {
-      // For transfers, the outflow from origin account is tx.transferAmount if provided, or tx.amount
+    } else if (tx.type === 'TRANSFER' || tx.type === 'CC_PAYMENT') {
+      // For transfers / cc payments, the outflow from origin account is tx.transferAmount if provided, or tx.amount
       const outflow = (tx.transferAmount && tx.transferAmount > 0) ? tx.transferAmount : amt;
       map[acc].balance -= outflow;
 
