@@ -628,7 +628,7 @@ export function SettingsTab({
                     <div className="text-left">
                       <div className="text-xs font-bold text-slate-100 flex items-center gap-1">
                         <UserCheck className="w-3 h-3 text-emerald-400" />
-                        <span>{authUser.user_metadata?.full_name || authUser.email}</span>
+                        <span>{authUser?.user_metadata?.full_name || authUser?.email || 'User'}</span>
                       </div>
                       <span className="text-[10px] text-emerald-400/90 font-mono">Connected</span>
                     </div>
