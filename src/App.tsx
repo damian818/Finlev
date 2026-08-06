@@ -7,7 +7,7 @@ import React, { useState, useEffect } from 'react';
 import { ViewTab, DisplayCurrency, Transaction, BudgetGoal, AccountCustomBalance, TransactionFilter, InflationPoint, CategoryItem, AccountItem } from './types';
 import { rawCsvSample, parseTransactions, defaultBudgets, defaultRecurringRules, historicalInflationAndFX, defaultCategoryItems, defaultAccountItems } from './data/defaultTransactions';
 import { deriveBudgetsFromTransactions } from './utils/financeUtils';
-import { getSupabaseClient } from './lib/supabase';
+import { getSupabaseClient, signInWithGoogle } from './lib/supabase';
 import { fetchUserDataFromSupabase, saveAllUserDataToSupabase } from './services/supabaseSync';
 import { Navbar } from './components/Navbar';
 import { OverviewTab } from './components/OverviewTab';
@@ -170,6 +170,54 @@ export default function App() {
       console.warn('Failed to save transactions to localStorage', e);
     }
   }, [transactions]);
+
+  // Auth State
+  const [authUser, setAuthUser] = useState<any>(null);
+  const [authLoading, setAuthLoading] = useState(true);
+
+  useEffect(() => {
+    const client = getSupabaseClient();
+    if (client) {
+      client.auth.getSession().then(({ data: { session } }) => {
+        setAuthUser(session?.user || null);
+        setAuthLoading(false);
+      });
+
+      const { data: { subscription } } = client.auth.onAuthStateChange((_e, session) => {
+        setAuthUser(session?.user || null);
+        setAuthLoading(false);
+      });
+      return () => subscription.unsubscribe();
+    } else {
+      setAuthLoading(false);
+    }
+  }, []);
+
+  if (authLoading) {
+    return (
+      <div className="min-h-screen bg-[#0a0b0d] flex items-center justify-center text-slate-400 font-bold">
+        Loading Finlev...
+      </div>
+    );
+  }
+
+  if (!authUser) {
+    return (
+      <div className="min-h-screen bg-[#0a0b0d] flex flex-col items-center justify-center p-6 text-center">
+        <h1 className="text-4xl font-black text-white mb-6">Finlev</h1>
+        <p className="text-slate-400 mb-8 max-w-sm">Securely manage your personal finances with persistent data synchronization.</p>
+        <button
+          onClick={async () => {
+            const { error } = await signInWithGoogle();
+            if (error) alert(`Login failed: ${error.message}`);
+          }}
+          className="px-6 py-3 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-xl shadow-lg transition-all active:scale-95 flex items-center gap-2"
+        >
+          Sign in with Google SSO
+        </button>
+      </div>
+    );
+  }
 
   // Sync budgets to localStorage on update
   useEffect(() => {
