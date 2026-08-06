@@ -176,30 +176,25 @@ export default function App() {
   const [authLoading, setAuthLoading] = useState(true);
 
   useEffect(() => {
-    console.log('App: useEffect for auth init');
     const client = getSupabaseClient();
+    
+    // Handle hash cleanup once on load if needed
+    if (window.location.hash) {
+      window.history.replaceState(null, '', window.location.pathname);
+    }
+
     if (client) {
-      console.log('App: Supabase client found');
       client.auth.getSession().then(({ data: { session } }) => {
-        console.log('App: getSession session=', session);
         setAuthUser(session?.user || null);
         setAuthLoading(false);
-        if (session?.user && window.location.hash) {
-          window.history.replaceState(null, '', window.location.pathname);
-        }
       });
 
       const { data: { subscription } } = client.auth.onAuthStateChange((_e, session) => {
-        console.log('App: onAuthStateChange session=', session);
-        setAuthUser(session?.user || null);
+        setAuthUser(prev => (prev?.id === session?.user?.id ? prev : (session?.user || null)));
         setAuthLoading(false);
-        if (session?.user && window.location.hash) {
-          window.history.replaceState(null, '', window.location.pathname);
-        }
       });
       return () => subscription.unsubscribe();
     } else {
-      console.log('App: Supabase client NOT found');
       setAuthLoading(false);
     }
   }, []);
