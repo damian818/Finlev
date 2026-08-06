@@ -2,16 +2,25 @@ import { createClient, SupabaseClient, User, Session } from '@supabase/supabase-
 
 // Get credentials from environment or runtime localStorage config
 export function getSupabaseCredentials(): { url: string; anonKey: string } {
+  // Try to load from import.meta.env first (injected by Vite)
   const metaEnv = (import.meta as any).env || {};
-  const envUrl = metaEnv.VITE_SUPABASE_URL || '';
-  const envKey = metaEnv.VITE_SUPABASE_ANON_KEY || '';
+  const envUrl = metaEnv.VITE_SUPABASE_URL || metaEnv.VITE_PUBLIC_SUPABASE_URL || '';
+  const envKey = metaEnv.VITE_SUPABASE_ANON_KEY || metaEnv.VITE_PUBLIC_SUPABASE_ANON_KEY || '';
 
+  // Fallback to localStorage if not in environment
   const localUrl = typeof window !== 'undefined' ? localStorage.getItem('finlev_supabase_url') || '' : '';
   const localKey = typeof window !== 'undefined' ? localStorage.getItem('finlev_supabase_anon_key') || '' : '';
 
+  const finalUrl = envUrl || localUrl;
+  const finalKey = envKey || localKey;
+
+  if (!finalUrl || !finalKey) {
+    console.error('Supabase credentials missing:', { envUrl, localUrl, envKey, localKey });
+  }
+
   return {
-    url: localUrl || envUrl,
-    anonKey: localKey || envKey,
+    url: finalUrl,
+    anonKey: finalKey,
   };
 }
 
