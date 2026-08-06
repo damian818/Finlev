@@ -48,6 +48,8 @@ import {
 } from '../lib/supabase';
 
 interface SettingsTabProps {
+  authUser: any;
+  authLoading: boolean;
   categories: CategoryItem[];
   accounts: AccountItem[];
   transactions: Transaction[];
@@ -62,9 +64,12 @@ interface SettingsTabProps {
   onDeleteAccount: (accountName: string) => void;
   onResetData: () => void;
   onImportBackup?: (data: { transactions: Transaction[]; categories: CategoryItem[]; accounts: AccountItem[]; budgets: BudgetGoal[] }) => void;
+  onLogout: () => void;
 }
 
 export function SettingsTab({
+  authUser,
+  authLoading,
   categories,
   accounts,
   transactions,
@@ -79,6 +84,7 @@ export function SettingsTab({
   onDeleteAccount,
   onResetData,
   onImportBackup,
+  onLogout,
 }: SettingsTabProps) {
   const [activeSubTab, setActiveSubTab] = useState<'accounts' | 'categories' | 'preferences'>('accounts');
 
@@ -108,43 +114,16 @@ export function SettingsTab({
 
   const [deletingAccName, setDeletingAccName] = useState<string | null>(null);
 
-  // Auth State
-  const [authUser, setAuthUser] = useState<any>(null);
-  const [authLoading, setAuthLoading] = useState(false);
-
-  useEffect(() => {
-    const client = getSupabaseClient();
-    if (client) {
-      client.auth.getSession().then(({ data: { session } }) => {
-        setAuthUser(session?.user || null);
-      });
-
-      const { data: { subscription } } = client.auth.onAuthStateChange((_event, session) => {
-        setAuthUser(session?.user || null);
-      });
-
-      return () => {
-        subscription.unsubscribe();
-      };
-    } else {
-      setAuthUser(null);
-    }
-  }, []);
-
   const handleGoogleLogin = async () => {
-    setAuthLoading(true);
     const { error } = await signInWithGoogle();
     if (error) {
       alert(`Google SSO login failed: ${error.message}`);
     }
-    setAuthLoading(false);
   };
 
   const handleLogout = async () => {
-    setAuthLoading(true);
     await signOutFromSupabase();
-    setAuthUser(null);
-    setAuthLoading(false);
+    onLogout();
   };
 
   // Category usage count map

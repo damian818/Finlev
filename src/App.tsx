@@ -537,6 +537,8 @@ export default function App() {
         )}
         {currentTab === 'settings' && (
           <SettingsTab
+            authUser={authUser}
+            authLoading={authLoading}
             categories={categories}
             accounts={accounts}
             transactions={transactions}
@@ -551,6 +553,7 @@ export default function App() {
             onDeleteAccount={handleDeleteAccount}
             onResetData={handleResetData}
             onImportBackup={handleImportBackup}
+            onLogout={() => setAuthUser(null)}
           />
         )}
       </main>
